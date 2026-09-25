@@ -7,3 +7,6 @@ updates:
     schedule: {interval: weekly}
     groups:
       actions: {patterns: ["*"]}
+  - package-ecosystem: pip        # pyproject.toml (no dependencies yet; watched so standards-check holds here too)
+    directory: /
+    schedule: {interval: weekly}
