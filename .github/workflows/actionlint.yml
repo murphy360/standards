@@ -1,0 +1,18 @@
+# actionlint on the calling project's workflows.
+#   jobs:
+#     workflows:
+#       uses: murphy360/standards/.github/workflows/actionlint.yml@v1
+name: actionlint
+on:
+  workflow_call:
+    inputs:
+      actionlint-version: {type: string, default: "1.7.12"}
+permissions:
+  contents: read
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo "rhysd/actionlint:${{ inputs.actionlint-version }}" -color

@@ -1,0 +1,32 @@
+# A project's CI from the standards: copy to .github/workflows/ci.yml, keep the jobs that apply, pin @v1.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  standards:
+    uses: murphy360/standards/.github/workflows/standards-check.yml@v1
+  lint:
+    uses: murphy360/standards/.github/workflows/python-lint.yml@v1
+    with:
+      format-check: true
+  shell:
+    uses: murphy360/standards/.github/workflows/shell-lint.yml@v1
+  workflows:
+    uses: murphy360/standards/.github/workflows/actionlint.yml@v1
+  test:
+    uses: murphy360/standards/.github/workflows/test-docker.yml@v1
+    with:
+      command: "pytest -q"
+  image:
+    needs: [lint, test]
+    uses: murphy360/standards/.github/workflows/image.yml@v1
+    with:
+      image: my-service
+      push: ${{ github.event_name != 'pull_request' }}
+    permissions:
+      contents: read
+      packages: write

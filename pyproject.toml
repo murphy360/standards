@@ -1,0 +1,6 @@
+# The standard ruff settings are ruff's defaults (88 columns, ruff format). Nothing to configure: a project adds a
+# [tool.ruff] section only for a reason, and says the reason in a comment.
+[project]
+name = "murphy360-standards"
+version = "1.0.0"
+requires-python = ">=3.12"

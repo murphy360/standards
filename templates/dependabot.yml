@@ -1,0 +1,22 @@
+# Copy to .github/dependabot.yml and keep the entries your repository needs (standards-check says which are missing).
+# Weekly, grouped, so an update is one pull request per ecosystem, not one per package.
+version: 2
+updates:
+  - package-ecosystem: github-actions      # the workflows' pinned actions (SHA pins are updated with their comment)
+    directory: /
+    schedule: {interval: weekly}
+    groups:
+      actions: {patterns: ["*"]}
+  - package-ecosystem: pip                 # pyproject.toml / requirements*.txt
+    directory: /
+    schedule: {interval: weekly}
+    groups:
+      python: {patterns: ["*"]}
+  - package-ecosystem: docker              # base images in Dockerfiles (list each directory that has one)
+    directory: /
+    schedule: {interval: weekly}
+  - package-ecosystem: npm                 # package.json (the directory that holds it)
+    directory: /
+    schedule: {interval: weekly}
+    groups:
+      javascript: {patterns: ["*"]}

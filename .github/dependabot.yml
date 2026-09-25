@@ -1,0 +1,9 @@
+# This repository's own updates: the pinned actions in its workflows (every project that calls them gets the update
+# by moving to the next tag of this repository).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
+    groups:
+      actions: {patterns: ["*"]}

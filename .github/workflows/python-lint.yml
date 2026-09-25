@@ -1,0 +1,39 @@
+# Python lint with the ratchet (tools/code_rules.py): ruff with the project's config plus the standard complexity
+# limits, and the file-size limit, against the project's code_rules_baseline.json. Call it from a project:
+#   jobs:
+#     lint:
+#       uses: murphy360/standards/.github/workflows/python-lint.yml@v1
+name: python-lint
+on:
+  workflow_call:
+    inputs:
+      ruff-version: {type: string, default: "0.6.9", description: "the ruff release, pinned"}
+      python-version: {type: string, default: "3.12"}
+      format-check: {type: boolean, default: false, description: "also run ruff format --check"}
+      working-directory: {type: string, default: "."}
+      standards-ref: {type: string, default: "v1", description: "the tag the project pins (the tools come from it)"}
+permissions:
+  contents: read
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: The standards' tools, at the version the project pins
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: murphy360/standards
+          ref: ${{ inputs.standards-ref }}
+          path: .standards
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - run: pip install "ruff==${{ inputs.ruff-version }}"
+      - name: Code rules (ruff, complexity, file size) against the ratchet baseline
+        run: python3 "$GITHUB_WORKSPACE/.standards/tools/code_rules.py"
+      - name: Formatting
+        if: inputs.format-check
+        run: ruff format --check .

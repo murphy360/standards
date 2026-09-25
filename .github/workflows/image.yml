@@ -1,0 +1,87 @@
+# Multi-arch image build and push to ghcr.io: each architecture on its own native runner (no emulation), then one
+# manifest list with the tags the metadata action derives (branch, PR, semver, sha).
+#   jobs:
+#     image:
+#       uses: murphy360/standards/.github/workflows/image.yml@v1
+#       with: {image: my-service}
+#       permissions: {contents: read, packages: write}
+name: image
+on:
+  workflow_call:
+    inputs:
+      image: {type: string, required: true, description: "the image name under ghcr.io/<owner>/"}
+      context: {type: string, default: "."}
+      file: {type: string, default: "Dockerfile"}
+      target: {type: string, default: ""}
+      push: {type: boolean, default: true, description: "false: build only (a pull request from a fork)"}
+      amd64-runner: {type: string, default: "ubuntu-latest"}
+      arm64-runner: {type: string, default: "ubuntu-24.04-arm"}
+    outputs:
+      digest: {description: "the manifest list digest", value: "${{ jobs.merge.outputs.digest }}"}
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && inputs.arm64-runner || inputs.amd64-runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        if: inputs.push
+        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.file }}
+          target: ${{ inputs.target }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: ${{ inputs.push && format('type=image,name=ghcr.io/{0}/{1},push-by-digest=true,name-canonical=true,push=true', github.repository_owner, inputs.image) || 'type=cacheonly' }}
+          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ matrix.arch }}
+      - name: Keep the digest for the manifest
+        if: inputs.push
+        run: |
+          mkdir -p /tmp/digests
+          d="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${d#sha256:}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: inputs.push
+        with: {name: "digest-${{ matrix.arch }}", path: /tmp/digests/*, retention-days: 1}
+  merge:
+    if: inputs.push
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.inspect.outputs.digest }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with: {pattern: "digest-*", path: /tmp/digests, merge-multiple: true}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+      - name: One manifest list for both architectures
+        working-directory: /tmp/digests
+        run: |
+          # shellcheck disable=SC2046
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@sha256:%s ' *)
+      - id: inspect
+        run: |
+          ref="ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}:${{ steps.meta.outputs.version }}"
+          echo "digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r .digest)" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,20 @@
+# shellcheck on every tracked *.sh, pinned (no marketplace action on a moving branch).
+#   jobs:
+#     shell:
+#       uses: murphy360/standards/.github/workflows/shell-lint.yml@v1
+name: shell-lint
+on:
+  workflow_call:
+    inputs:
+      shellcheck-version: {type: string, default: "v0.10.0"}
+permissions:
+  contents: read
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: shellcheck
+        run: |
+          git ls-files -z '*.sh' | xargs -0 -r docker run --rm -v "$PWD:/mnt" -w /mnt \
+            "koalaman/shellcheck:${{ inputs.shellcheck-version }}"
