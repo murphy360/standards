@@ -16,6 +16,10 @@ ruff config):
   plus pycodestyle and pyflakes (E, W, F) and three complexity limits added on top:
   McCabe complexity 15
   (C901), 15 branches (PLR0912) and 60 statements (PLR0915) per function.
+* **ESLint** (``--eslint``, for JavaScript and TypeScript projects) with the project's
+  own ``eslint.config.*`` and its pinned ESLint from ``node_modules``, plus two
+  complexity limits added on top: complexity 15 (``complexity``) and 60 statements
+  (``max-statements``) per function.
 * **file size**: a tracked source file (.py .js .ts .tsx .sh) over 800 lines, a test
   over 1200, fails.
 
@@ -26,7 +30,7 @@ or anything new, fails. Below
 a ceiling also fails until ``--update`` lowers the baseline in the same pull request, so
 it only ever goes down and a
 file that shrank cannot grow back. ``--update`` never takes in a new finding. Standard
-library only, apart from ruff.
+library only, apart from ruff (skipped when no Python file is tracked) and ESLint.
 """
 
 from __future__ import annotations
@@ -53,6 +57,14 @@ STANDARD = [
     "lint.pylint.max-statements=60",
 ]
 FUNC_RE = re.compile(r"`(\w+)`")
+ESLINT_COMPLEXITY = ("complexity", "max-statements")
+ESLINT_STANDARD = [
+    "--rule",
+    '{"complexity": ["error", 15]}',
+    "--rule",
+    '{"max-statements": ["error", 60]}',
+]
+ESLINT_FUNC_RE = re.compile(r"'([^']+)'")
 
 
 def is_test(rel: str) -> bool:
@@ -131,6 +143,41 @@ def ruff_counts(root: Path) -> Counter:
     return counts
 
 
+def eslint_counts(root: Path) -> Counter:
+    exe = root / "node_modules" / ".bin" / "eslint"
+    if not exe.exists():
+        raise SystemExit(
+            "code_rules: node_modules/.bin/eslint not found; "
+            "add eslint to devDependencies and run npm ci"
+        )
+    res = subprocess.run(
+        [str(exe), "--format", "json", *ESLINT_STANDARD, "."],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    # ESLint exits 1 when it has findings and 2 when it could not run.
+    if res.returncode not in (0, 1):
+        err = res.stderr.strip()[:300]
+        raise SystemExit(f"code_rules: eslint did not run ({err})")
+    return parse_eslint(res.stdout, root)
+
+
+def parse_eslint(output: str, root: Path) -> Counter:
+    """Count ESLint's JSON findings per file and rule (per function for complexity)."""
+    counts: Counter = Counter()
+    for f in json.loads(output or "[]"):
+        rel = Path(f["filePath"]).resolve().relative_to(root.resolve()).as_posix()
+        for m in f.get("messages", []):
+            rule = m.get("ruleId") or "syntax"
+            key = f"{rel}::{rule}"
+            if rule in ESLINT_COMPLEXITY:
+                name = ESLINT_FUNC_RE.search(m.get("message") or "")
+                key += f'::{name.group(1) if name else "?"}'
+            counts[key] += 1
+    return counts
+
+
 def compare(kind: str, now: dict, base: dict) -> list[str]:
     out = []
     for key in sorted(set(now) | set(base)):
@@ -154,18 +201,18 @@ def compare(kind: str, now: dict, base: dict) -> list[str]:
 def lowered(now: dict, base: dict, first: bool) -> dict:
     """The new baseline: today as it is the first time.
 
-    Afterwards it only lowers, and never takes in a new entry.
+    Afterwards it only lowers, and never takes in a new entry. A kind that was not
+    checked this run (``eslint`` without ``--eslint``) keeps its baseline as it is.
     """
-    return {
-        kind: dict(now[kind])
-        if first
-        else {
-            k: min(v, base.get(kind, {})[k])
-            for k, v in now[kind].items()
-            if k in base.get(kind, {})
-        }
-        for kind in ("ruff", "lines")
-    }
+    new = {k: v for k, v in base.items() if k not in now and k != "note"}
+    for kind in now:
+        old = base.get(kind)
+        new[kind] = (
+            dict(now[kind])
+            if first or old is None
+            else {k: min(v, old[k]) for k, v in now[kind].items() if k in old}
+        )
+    return new
 
 
 def main(argv=None) -> int:
@@ -181,6 +228,11 @@ def main(argv=None) -> int:
     ap.add_argument("--max-lines", type=int, default=800)
     ap.add_argument("--max-test-lines", type=int, default=1200)
     ap.add_argument(
+        "--eslint",
+        action="store_true",
+        help="also run the project's ESLint (JavaScript and TypeScript)",
+    )
+    ap.add_argument(
         "--update",
         action="store_true",
         help="write the first baseline, or lower it; never raises one",
@@ -189,10 +241,13 @@ def main(argv=None) -> int:
     root = Path(a.root).resolve()
     base_path = root / a.baseline
     files = tracked_sources(root)
+    has_python = any(f.endswith(".py") for f in files)
     now = {
-        "ruff": dict(ruff_counts(root)),
+        "ruff": dict(ruff_counts(root)) if has_python else {},
         "lines": file_sizes(files, root, a.max_lines, a.max_test_lines),
     }
+    if a.eslint:
+        now["eslint"] = dict(eslint_counts(root))
     base = (
         json.loads(base_path.read_text())
         if base_path.exists()
@@ -217,15 +272,14 @@ def main(argv=None) -> int:
             f"({sum(len(v) for v in new.values())} entries)"
         )
         return 0
-    problems = compare("ruff", now["ruff"], base.get("ruff", {})) + compare(
-        "lines", now["lines"], base.get("lines", {})
-    )
+    problems = [p for kind in now for p in compare(kind, now[kind], base.get(kind, {}))]
     for p in problems:
         print(p)
     print(
         "code_rules: "
         + (f"FAILED, {len(problems)} problem(s)" if problems else "OK")
-        + f" ({sum(now['ruff'].values())} baseline finding(s) left, "
+        + f" ({sum(now['ruff'].values()) + sum(now.get('eslint', {}).values())}"
+        " baseline finding(s) left, "
         f"{len(now['lines'])} file(s) over the size limit)"
     )
     return 1 if problems else 0
