@@ -43,4 +43,4 @@ jobs:
         run: python3 "$GITHUB_WORKSPACE/.standards/tools/code_rules.py" --eslint
       - name: Formatting
         if: inputs.format-check
-        run: npx --no-install prettier --check . "!.standards/**"
+        run: npx --no-install prettier --check . "!.standards/**" "!code_rules_baseline.json"
