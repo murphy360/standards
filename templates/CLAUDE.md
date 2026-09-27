@@ -41,14 +41,16 @@ on the ticket and take the next one; never guess. Say on the ticket, in one comm
 
 ## Standards every project keeps (murphy360/standards)
 - CI calls the shared workflows at a pinned version tag: standards-check, python-lint (ruff at its defaults, 88
-  columns, `ruff format`), shell-lint, actionlint, test-docker, image. One run per ref: a pull request's superseded
-  run is cancelled, and a fixed-name `result` job is what a ruleset requires.
+  columns, `ruff format`) or node-lint (ESLint, and Prettier's defaults when `format-check` is on), shell-lint,
+  actionlint, test-docker, image. One run per ref: a pull request's superseded run is cancelled, and a fixed-name
+  `result` job is what a ruleset requires.
 - The code rules (`code_rules.py`): complexity 15, 15 branches and 60 statements per function, 800 lines per file
   (1200 for a test). Every file is clean: formatted, no finding, no `# noqa`, under the size limit. CI checks every
   file on every run, and a finding anywhere fails it; each finding is printed with its line, rule and fix. A change
   that would take a file over the limit splits it in the same PR. There is no baseline and no flag that skips the
-  rules. Run `code_rules.py --all` before a push. A PR that only re-formats is labelled `format-only`, and
-  `code_rules.py --format-only` proves it changed no code.
+  rules. Run `code_rules.py --all` before a push. A JavaScript or TypeScript project runs `code_rules.py --eslint`
+  (node-lint does): complexity 15 and 60 statements, and `prettier --check` when formatting is on. A PR that only
+  re-formats Python is labelled `format-only`, and `code_rules.py --format-only` proves it changed no code.
 - Pre-commit hooks (`.pre-commit-config.yaml`, from the template): ruff, ruff format, shellcheck and actionlint,
   so a finding is caught before the push, not after. `pip install pre-commit && pre-commit install` once per
   checkout.

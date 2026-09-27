@@ -26,6 +26,12 @@ jobs:
       # mode: changed  # default `all`: every file must be clean. `changed`: every file a change touches, while
       #                # `code_rules.py --all` still lists findings
       format-only: ${{ contains(github.event.pull_request.labels.*.name, 'format-only') }}
+  # A JavaScript or TypeScript project uses node-lint instead of python-lint, or as a job of its own:
+  # node:
+  #   uses: murphy360/standards/.github/workflows/node-lint.yml@v2
+  #   with:
+  #     format-check: true
+  #     # mode: changed
   shell:
     uses: murphy360/standards/.github/workflows/shell-lint.yml@v2
   workflows:

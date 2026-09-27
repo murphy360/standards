@@ -1,0 +1,110 @@
+# JavaScript and TypeScript lint (tools/code_rules.py --eslint): the project's ESLint and eslint.config.* plus the
+# standard complexity limits (complexity 15, 60 statements) and the file-size limit. The standard is that every file
+# is clean: mode all (the default) checks every file on every run, and a finding anywhere fails. Each finding is
+# printed with its line, its rule and how to fix it. format-check adds prettier --check in the same scope. ESLint and
+# Prettier come from the project's devDependencies: its lockfile pins them and Dependabot updates them.
+# Added in v2.2.0. A project already pinned at @v2 sees nothing new until it calls this workflow.
+# Call it from a project:
+#   jobs:
+#     lint:
+#       uses: murphy360/standards/.github/workflows/node-lint.yml@v2
+#       with:
+#         format-check: true
+#         # mode: changed     # a project still paying down its debt: every file a change touches must be clean
+#         # paths: src        # only these directories (default: every tracked file)
+#
+# The base. A pull request is compared with the first parent of the merge commit the job checks out: the base branch
+# as the pull request was merged with it (the pull request's base SHA when HEAD is not a merge commit). A push is
+# compared with the commit before the push. The step exports it as CODE_RULES_BASE. Mode changed needs it; with no
+# base (a schedule, a dispatch, a new branch or tag) mode changed checks every file.
+name: node-lint
+on:
+  workflow_call:
+    inputs:
+      runs-on: {type: string, default: "ubuntu-latest", description: "a runner label, or a JSON list of labels (a self-hosted runner)"}
+      node-version: {type: string, default: "22"}
+      format-check: {type: boolean, default: false, description: "also check prettier, in the same scope as mode"}
+      mode: {type: string, default: "all", description: "all: every file must be clean; changed: every file the change touches"}
+      paths: {type: string, default: "", description: "space-separated directories or files to check (default: every tracked file)"}
+      working-directory: {type: string, default: "."}
+      ruff-version: {type: string, default: "0.6.9", description: "for a project that also tracks Python files"}
+      standards-ref: {type: string, default: "v2", description: "the tag the project pins (the tools come from it)"}
+permissions:
+  contents: read
+jobs:
+  lint:
+    runs-on: ${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Take ownership of the previous job's files (a self-hosted runner)
+        if: runner.environment == 'self-hosted'
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: The standards' tools, at the version the project pins
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: murphy360/standards
+          ref: ${{ inputs.standards-ref }}
+          path: .standards
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+      - run: pip install "ruff==${{ inputs.ruff-version }}"
+      - run: npm ci
+      - name: Code rules (every file, or the files a change touches); ESLint, complexity, file size, prettier
+        env:
+          MODE: ${{ inputs.mode }}
+          FORMAT_CHECK: ${{ inputs.format-check }}
+          PATHS: ${{ inputs.paths }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          tool="$GITHUB_WORKSPACE/.standards/tools/code_rules.py"
+          args=(--eslint --no-format)
+          if [ "$FORMAT_CHECK" = true ]; then
+            args+=(--prettier)
+          fi
+          read -r -a paths <<< "$PATHS"
+          [ ${#paths[@]} -eq 0 ] || args+=(--paths "${paths[@]}")
+          case "$MODE" in
+            all | changed) ;;
+            *) echo "::error::mode is all or changed, not '$MODE'"; exit 1 ;;
+          esac
+          base=""
+          if [ "$EVENT" = pull_request ]; then
+            # The merge commit the job checked out says what the pull request was merged with: its first parent.
+            # The base branch may have moved on since; comparing with it would count files this PR never touched.
+            parents=$(git cat-file -p HEAD | sed -n 's/^parent //p')
+            first=$(printf '%s\n' "$parents" | head -1)
+            if [ "$(printf '%s\n' "$parents" | grep -c .)" -eq 2 ] \
+              && git fetch --no-tags --depth=1 origin "$first"; then
+              base="$first"
+              echo "code rules base: $first, the first parent of the merge commit $(git rev-parse HEAD)"
+            else
+              base="$PR_BASE"
+              echo "code rules base: $base, the pull request's base (HEAD is not a merge commit, or its parent did not fetch)"
+              git fetch --no-tags --depth=1 origin "$base" || echo "::warning::could not fetch the base $base"
+            fi
+          elif [ "$EVENT" = push ] && [ -n "${BEFORE//0/}" ]; then
+            base="$BEFORE"  # all zeros: a new branch or tag, nothing before it
+            echo "code rules base: $base, the commit before the push"
+            git fetch --no-tags --depth=1 origin "$base" || echo "::warning::could not fetch the base $base"
+          fi
+          [ -z "$base" ] || export CODE_RULES_BASE="$base"
+          status=0
+          if [ "$MODE" = all ]; then
+            python3 "$tool" --all "${args[@]}" || status=$?
+          elif [ -z "$base" ]; then
+            echo "::notice::no base to compare with on a $EVENT event: every file is checked"
+            python3 "$tool" --all "${args[@]}" || status=$?
+          else
+            python3 "$tool" "${args[@]}" || status=$?
+          fi
+          exit "$status"

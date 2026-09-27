@@ -769,7 +769,202 @@ def test_the_workflow_checks_every_file_by_default():
     assert "export CODE_RULES_BASE" in lint_step()
 
 
-# the standards check
+def _between(text: str, start: str, end: str) -> str:
+    return text.split(start, 1)[1].split(end, 1)[0]
+
+
+def test_node_lint_checks_every_file_and_has_no_baseline():
+    """node-lint is python-lint's rule for JavaScript: clean files, no ratchet."""
+    text = (ROOT / ".github" / "workflows" / "node-lint.yml").read_text()
+    assert 'mode: {type: string, default: "all"' in text
+    assert "ratchet" not in text and "code_rules_baseline" not in text
+    assert "--update" not in text and "@v1" not in text
+    assert "node-lint.yml@v2" in text and "Added in v2.2.0" in text
+    assert "--eslint" in text and "--prettier" in text and "--no-format" in text
+    assert "export CODE_RULES_BASE" in text
+    for pin in (
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1",
+        "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0",
+        "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0",
+    ):
+        assert pin in text
+    assert "runner.environment == 'self-hosted'" in text
+    assert "timeout-minutes: 15" in text
+    py = (ROOT / ".github" / "workflows" / "python-lint.yml").read_text()
+    assert (
+        py.split("runs-on: ", 1)[1].split("\n", 1)[0]
+        == text.split("runs-on: ", 1)[1].split("\n", 1)[0]
+    )
+    # The base a pull request is compared with is the same shell in both workflows.
+    start, end = 'base=""', 'export CODE_RULES_BASE="$base"'
+    assert _between(py, start, end) == _between(text, start, end)
+
+
+def _eslint(rel, code="no-unused-vars", message="'x' is unused.", line=1, col=1):
+    return {
+        "rel": rel,
+        "line": line,
+        "col": col,
+        "code": code,
+        "message": message,
+        "tool": "eslint",
+        "func": None,
+    }
+
+
+def test_eslint_findings_are_read_per_file_rule_and_function(tmp_path):
+    out = json.dumps(
+        [
+            {
+                "filePath": str(tmp_path / "src" / "a.ts"),
+                "messages": [
+                    {
+                        "ruleId": "complexity",
+                        "severity": 2,
+                        "line": 4,
+                        "column": 1,
+                        "message": "Function 'digest' has a complexity of 16. "
+                        "Maximum allowed is 15.",
+                    },
+                    {
+                        "ruleId": "max-statements",
+                        "message": "Arrow function has too many statements (61).",
+                    },
+                    {"ruleId": "no-unused-vars", "message": "'x' is unused."},
+                    {
+                        "ruleId": "no-unused-vars",
+                        "severity": 1,
+                        "message": "'kept' is unused.",
+                    },
+                    {"ruleId": "no-unused-vars", "message": "'y' is unused."},
+                    {"ruleId": None, "message": "Parsing error"},
+                ],
+            },
+            {"filePath": str(tmp_path / "b.js"), "messages": []},
+            {
+                "filePath": str(tmp_path / "other.ts"),
+                "messages": [{"ruleId": "semi", "message": "missing"}],
+            },
+        ]
+    )
+    found = rules.parse_eslint(out, tmp_path, keep={"src/a.ts", "b.js"})
+    assert rules.eslint_count(found) == {
+        "src/a.ts::complexity::digest": 1,
+        "src/a.ts::max-statements::?": 1,
+        "src/a.ts::no-unused-vars": 2,
+        "src/a.ts::syntax": 1,
+    }
+    assert "named helpers" in rules.fix_for("complexity", "eslint")
+    assert "parses" in rules.fix_for("syntax", "eslint")
+    assert rules.parse_prettier(
+        "Checking formatting...\n[warn] src/a.ts\n"
+        "[warn] Code style issues found in the above file. Forgot to run Prettier?\n"
+    ) == ["src/a.ts"]
+
+
+def test_a_changed_typescript_file_with_an_eslint_finding_fails(
+    tmp_path, capsys, monkeypatch
+):
+    root = repo(
+        tmp_path,
+        {"src/a.ts": "export const a = 1;\n", "src/old.ts": "export const o = 1;\n"},
+    )
+    commit_base(root)
+    write(root, {"src/a.ts": "export const a = 2;\n"})
+    commit(root, "edit a")
+    monkeypatch.setattr(
+        rules,
+        "eslint_findings",
+        lambda *a, **k: [_eslint("src/a.ts"), _eslint("src/old.ts", message="'o'")],
+    )
+    monkeypatch.setattr(rules, "ruff_findings", lambda *a, **k: pytest.fail("ran ruff"))
+    assert run(root, "--eslint") == 1
+    out = capsys.readouterr().out
+    assert "changed: src/a.ts: 1 eslint finding(s) (no-unused-vars 1)" in out
+    assert "src/a.ts:1:1: no-unused-vars 'x' is unused." in out
+    assert "the ESLint rule `no-unused-vars`" in out
+    assert "old.ts" not in out
+    assert "2 finding(s)" in out
+    assert run(root, "--eslint", "--all") == 1
+    out = capsys.readouterr().out
+    assert "all: src/old.ts: 1 eslint finding(s)" in out
+    assert "all: src/a.ts: 1 eslint finding(s)" in out
+
+
+def test_a_clean_typescript_change_passes_and_skips_ruff(tmp_path, capsys, monkeypatch):
+    root = repo(tmp_path, {"src/a.ts": "export const a = 1;\n"})
+    commit_base(root)
+    write(root, {"src/a.ts": "export const a = 2;\n"})
+    commit(root, "edit a")
+    monkeypatch.setattr(rules, "eslint_findings", lambda *a, **k: [])
+    monkeypatch.setattr(rules, "ruff_findings", lambda *a, **k: pytest.fail("ran ruff"))
+    assert run(root, "--eslint") == 0
+    assert "code_rules: OK (left in the repository: 0 finding(s)" in (
+        capsys.readouterr().out
+    )
+
+
+def test_a_changed_typescript_file_over_the_size_limit_fails(
+    tmp_path, capsys, monkeypatch
+):
+    root = repo(tmp_path, {"src/a.ts": "export const a = 1;\n"})
+    commit_base(root)
+    write(root, {"src/a.ts": "export const a = 1;\n" * 801})
+    commit(root, "grow")
+    monkeypatch.setattr(rules, "eslint_findings", lambda *a, **k: [])
+    assert run(root, "--eslint") == 1
+    assert "src/a.ts: 801 lines, over its limit 800" in capsys.readouterr().out
+
+
+def test_prettier_fails_a_changed_file_and_keeps_one_nobody_touched(
+    tmp_path, capsys, monkeypatch
+):
+    root = repo(tmp_path, {"src/a.ts": "export const a = 1;\n", "README.md": "# hi\n"})
+    commit_base(root)
+    write(root, {"src/a.ts": "export const a = 2;\n"})
+    commit(root, "edit a")
+    monkeypatch.setattr(rules, "eslint_findings", lambda *a, **k: [])
+    monkeypatch.setattr(
+        rules, "prettier_unformatted", lambda *a, **k: ["src/a.ts", "README.md"]
+    )
+    assert run(root, "--eslint", "--prettier") == 1
+    out = capsys.readouterr().out
+    assert "prettier: src/a.ts: fails `prettier --check`" in out
+    assert "README.md" not in out.split("left in the repository")[0]
+    assert "2 file(s) failing prettier" in out
+    assert run(root, "--eslint", "--prettier", "--all") == 1
+    assert "all: README.md: fails `prettier --check`" in capsys.readouterr().out
+
+
+def test_paths_limit_eslint_to_those_files(tmp_path, monkeypatch):
+    root = repo(
+        tmp_path,
+        {"src/a.ts": "export const a = 1;\n", "other/b.ts": "export const b = 1;\n"},
+    )
+    commit_base(root)
+    seen = {}
+
+    def fake(root, keep=None):
+        seen["keep"] = keep
+        return []
+
+    monkeypatch.setattr(rules, "eslint_findings", fake)
+    assert run(root, "--eslint", "--all", "--paths", "src") == 0
+    assert "src/a.ts" in seen["keep"] and "other/b.ts" not in seen["keep"]
+
+
+def test_eslint_needs_the_projects_eslint(tmp_path):
+    root = repo(tmp_path, {"src/a.ts": "export const a = 1;\n"})
+    with pytest.raises(SystemExit, match="eslint not found"):
+        run(root, "--eslint")
+
+
+def test_prettier_needs_the_projects_prettier(tmp_path, monkeypatch):
+    root = repo(tmp_path, {"src/a.ts": "export const a = 1;\n"})
+    commit_base(root)
+    monkeypatch.setattr(rules, "eslint_findings", lambda *a, **k: [])
+    with pytest.raises(SystemExit, match="prettier not found"):
+        run(root, "--eslint", "--prettier")
 
 
 def test_standards_check_finds_every_gap(tmp_path):
