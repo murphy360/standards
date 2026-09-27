@@ -68,6 +68,61 @@ def test_code_rules_end_to_end(tmp_path):
     assert rules.main(["--root", str(root)]) == 1  # grew
 
 
+def test_eslint_findings_are_counted_per_file_rule_and_function(tmp_path):
+    out = json.dumps(
+        [
+            {
+                "filePath": str(tmp_path / "src" / "a.ts"),
+                "messages": [
+                    {
+                        "ruleId": "complexity",
+                        "message": "Function 'digest' has a complexity of 16. "
+                        "Maximum allowed is 15.",
+                    },
+                    {
+                        "ruleId": "max-statements",
+                        "message": "Arrow function has too many statements (61).",
+                    },
+                    {"ruleId": "no-unused-vars", "message": "'x' is unused."},
+                    {"ruleId": "no-unused-vars", "message": "'y' is unused."},
+                    {"ruleId": None, "message": "Parsing error"},
+                ],
+            },
+            {"filePath": str(tmp_path / "b.js"), "messages": []},
+        ]
+    )
+    assert rules.parse_eslint(out, tmp_path) == {
+        "src/a.ts::complexity::digest": 1,
+        "src/a.ts::max-statements::?": 1,
+        "src/a.ts::no-unused-vars": 2,
+        "src/a.ts::syntax": 1,
+    }
+
+
+def test_a_kind_not_checked_keeps_its_baseline_and_a_new_kind_starts_one():
+    base = {"ruff": {"x": 2}, "lines": {}, "eslint": {"a.ts::semi": 3}}
+    # A Python-only run leaves the ESLint ceilings alone.
+    kept = rules.lowered({"ruff": {"x": 1}, "lines": {}}, base, False)
+    assert kept == {"ruff": {"x": 1}, "lines": {}, "eslint": {"a.ts::semi": 3}}
+    # The first --eslint run on an existing baseline records today's findings.
+    old = {"ruff": {}, "lines": {}}
+    now = {"ruff": {}, "lines": {}, "eslint": {"a.ts::semi": 1}}
+    assert rules.lowered(now, old, False)["eslint"] == {"a.ts::semi": 1}
+
+
+def test_ruff_is_skipped_without_python(tmp_path, monkeypatch):
+    root = repo(tmp_path, {"src/a.ts": "export const a = 1;\n"})
+    monkeypatch.setattr(rules, "ruff_counts", lambda r: pytest.fail("ran ruff"))
+    assert rules.main(["--root", str(root), "--update"]) == 0
+    assert rules.main(["--root", str(root)]) == 0
+
+
+def test_eslint_mode_needs_eslint_installed(tmp_path):
+    root = repo(tmp_path, {"src/a.ts": "export const a = 1;\n"})
+    with pytest.raises(SystemExit, match="eslint not found"):
+        rules.main(["--root", str(root), "--eslint"])
+
+
 def test_standards_check_finds_every_gap(tmp_path):
     wf = (
         "jobs:\n  a:\n    steps:\n"

@@ -30,7 +30,7 @@ on the ticket and take the next one; never guess. Say on the ticket, in one comm
 
 ## Standards every project keeps (murphy360/standards)
 - CI calls the shared workflows at a pinned version tag: standards-check, python-lint (ruff at its defaults, 88
-  columns, `ruff format`), shell-lint, actionlint, test-docker, image.
+  columns, `ruff format`) or node-lint (ESLint, Prettier's defaults), shell-lint, actionlint, test-docker, image.
 - The code rules ratchet (`code_rules_baseline.json`): complexity 15, 15 branches and 60 statements per function,
   800 lines per file (1200 for a test). Never add to a file over the limit; split it in a PR of its own first. When
   you fix a finding, lower the baseline in the same PR (`code_rules.py --update`).

@@ -13,6 +13,10 @@ jobs:
     uses: murphy360/standards/.github/workflows/python-lint.yml@v1
     with:
       format-check: true
+  # A JavaScript or TypeScript project uses node-lint instead (or as well, as a job of its own):
+  #   uses: murphy360/standards/.github/workflows/node-lint.yml@v1
+  #   with:
+  #     format-check: true
   shell:
     uses: murphy360/standards/.github/workflows/shell-lint.yml@v1
   workflows:
