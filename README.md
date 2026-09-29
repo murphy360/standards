@@ -32,6 +32,11 @@ it by calling its workflows at a pinned version tag (`@v1`), copying its templat
   shared between pull requests, so parallel pull requests do not conflict. The last line of every run counts what
   is left in the repository. A project adopts the standard with its debt as it is and pays it down one changed file
   at a time. When the count reads zero, the project moves to `mode: all`, which checks every file on every run.
+- **What a change is compared with.** A pull request is compared with the first parent of the merge commit its run
+  checks out: the base branch as the pull request was merged with it. If the base branch moves on while the run
+  waits, the files that moved are not counted as the pull request's. When the run has no merge commit, the pull
+  request's base commit is used. A push is compared with the commit before the push. The run prints which base it
+  used.
 - **Dependencies stay current.** Every third-party action is pinned to a commit SHA with its version in a comment, and
   Dependabot updates the actions, pip, docker and npm dependencies weekly, one grouped pull request per ecosystem.
   Turn on Dependabot alerts and security updates in each repository's settings.

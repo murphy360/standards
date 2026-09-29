@@ -8,8 +8,9 @@
 #         format-check: true
 #         # mode: all        # once the report reads zero: every file, on every run
 #
-# mode: changed (the default) compares with a base. A pull request: its base branch's tip. A push: the commit before
-# the push. Any other event (a schedule, a dispatch, a new branch or tag) has no base: every file is reported and
+# mode: changed (the default) compares with a base. A pull request: the first parent of the merge commit the job
+# checks out, which is the base branch as the pull request was merged with it (the pull request's base SHA when HEAD
+# is not a merge commit). A push: the commit before the push. Any other event (a schedule, a dispatch, a new branch or tag) has no base: every file is reported and
 # nothing fails. mode: all checks every file on every event.
 name: python-lint
 on:
@@ -59,9 +60,20 @@ jobs:
           esac
           base=""
           if [ "$EVENT" = pull_request ]; then
+            # The merge commit the job checked out says what the pull request was merged with: its first parent.
+            # The base branch may have moved on since; comparing with it would count files this PR never touched.
+            parents=$(git cat-file -p HEAD | sed -n 's/^parent //p')
+            first=$(printf '%s\n' "$parents" | head -1)
+            if [ "$(printf '%s\n' "$parents" | grep -c .)" -eq 2 ] \
+              && git fetch --no-tags --depth=1 origin "$first"; then
+              echo "code rules base: $first, the first parent of the merge commit $(git rev-parse HEAD)"
+              CODE_RULES_BASE="$first" exec python3 "$tool" "${format[@]}"
+            fi
             base="$PR_BASE"
+            echo "code rules base: $base, the pull request's base (HEAD is not a merge commit, or its parent did not fetch)"
           elif [ "$EVENT" = push ] && [ -n "${BEFORE//0/}" ]; then
             base="$BEFORE"  # all zeros: a new branch or tag, nothing before it
+            echo "code rules base: $base, the commit before the push"
           fi
           if [ -z "$base" ]; then
             echo "::notice::no base to compare with on a $EVENT event: every file is reported, nothing fails"

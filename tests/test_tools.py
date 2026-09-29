@@ -7,6 +7,7 @@ ruff are skipped where ruff is not installed.
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -508,6 +509,115 @@ def test_a_re_format_leaves_the_findings_it_found(tmp_path, capsys):
     assert "changed: pkg/dirty.py" in capsys.readouterr().out
     assert run(root, "--format-only") == 0
     assert "left in the repository: 1 finding(s)" in capsys.readouterr().out
+
+
+# python-lint's code rules step, run as CI runs it: a shallow checkout of the pull
+# request's merge commit, from a remote whose base branch has moved on since
+
+
+def lint_step() -> str:
+    """The shell of python-lint's "Code rules" step, as the workflow holds it."""
+    text = (ROOT / ".github" / "workflows" / "python-lint.yml").read_text()
+    block = text.split("- name: Code rules", 1)[1].split("run: |\n", 1)[1]
+    lines = []
+    for line in block.splitlines():
+        if line.strip() and not line.startswith(" " * 10):
+            break
+        lines.append(line[10:])
+    return "\n".join(lines) + "\n"
+
+
+def moved_on_remote(tmp_path) -> dict:
+    """A remote: main has a finding, a PR merged into it, then main moved on.
+
+    The pull request changes only pkg/clean.py. After its merge commit was made,
+    main changed pkg/dirty.py, which has a finding.
+    """
+    origin = dirty_base(tmp_path / "origin")
+    git(origin, "config", "uploadpack.allowAnySHA1InWant", "true")
+    base = git(origin, "rev-parse", "HEAD").strip()
+    git(origin, "checkout", "-q", "-b", "pr")
+    write(origin, {"pkg/clean.py": 'message = "the pull request"\n'})
+    commit(origin, "the pull request")
+    head = git(origin, "rev-parse", "HEAD").strip()
+    git(origin, "checkout", "-q", "--detach", base)
+    git(origin, "merge", "-q", "--no-ff", "-m", "Merge pr into main", "pr")
+    merge = git(origin, "rev-parse", "HEAD").strip()
+    git(origin, "checkout", "-q", "main")
+    write(origin, {"pkg/dirty.py": LONG + "y = 2\n"})
+    commit(origin, "main moves on, in a file the pull request never touched")
+    tip = git(origin, "rev-parse", "HEAD").strip()
+    return {"origin": origin, "base": base, "head": head, "merge": merge, "tip": tip}
+
+
+def shallow_checkout(tmp_path, origin: Path, commit_sha: str) -> Path:
+    """What actions/checkout does: one commit, depth 1."""
+    ci = tmp_path / "ci"
+    ci.mkdir()
+    git(ci, "init", "-q")
+    git(ci, "remote", "add", "origin", f"file://{origin}")
+    git(ci, "fetch", "-q", "--no-tags", "--depth=1", "origin", commit_sha)
+    git(ci, "checkout", "-q", "--detach", "FETCH_HEAD")
+    return ci
+
+
+def run_lint_step(tmp_path, ci: Path, pr_base: str):
+    workspace = tmp_path / "workspace"
+    (workspace / ".standards").mkdir(parents=True)
+    (workspace / ".standards" / "tools").symlink_to(TOOLS)
+    env = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(tmp_path),
+        "CI": "true",
+        "GITHUB_WORKSPACE": str(workspace),
+        "MODE": "changed",
+        "FORMAT_CHECK": "true",
+        "EVENT": "pull_request",
+        "PR_BASE": pr_base,
+        "BEFORE": "",
+    }
+    return subprocess.run(
+        ["bash", "-e", "-c", lint_step()],
+        cwd=ci,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+@needs_ruff
+def test_a_pull_request_is_compared_with_its_merge_commits_first_parent(tmp_path):
+    """The base branch moved on after the merge commit: only the PR's files count.
+
+    The pull request's base SHA is given as the moved-on tip, the worst case: the
+    merge commit, not the event, says what the pull request was merged with.
+    """
+    r = moved_on_remote(tmp_path)
+    ci = shallow_checkout(tmp_path, r["origin"], r["merge"])
+    res = run_lint_step(tmp_path, ci, pr_base=r["tip"])
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert f"code rules base: {r['base']}, the first parent of the merge" in res.stdout
+    assert "code_rules: 1 changed file(s) checked" in res.stdout
+    # the control: compared with the moved-on tip, the untouched file would fail it
+    git(ci, "fetch", "-q", "--no-tags", "--depth=1", "origin", r["tip"])
+    res = subprocess.run(
+        ["python3", str(TOOLS / "code_rules.py")],
+        cwd=ci,
+        env={**os.environ, "CI": "true", "CODE_RULES_BASE": r["tip"]},
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 1 and "changed: pkg/dirty.py" in res.stdout
+
+
+@needs_ruff
+def test_a_pull_request_without_a_merge_commit_uses_its_base_sha(tmp_path):
+    r = moved_on_remote(tmp_path)
+    ci = shallow_checkout(tmp_path, r["origin"], r["head"])
+    res = run_lint_step(tmp_path, ci, pr_base=r["base"])
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert f"code rules base: {r['base']}, the pull request's base" in res.stdout
+    assert "code_rules: 1 changed file(s) checked" in res.stdout
 
 
 # the standards check
