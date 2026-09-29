@@ -1,15 +1,24 @@
-# Python lint with the ratchet (tools/code_rules.py): ruff with the project's config plus the standard complexity
-# limits, and the file-size limit, against the project's code_rules_baseline.json. Call it from a project:
+# Python lint (tools/code_rules.py): ruff with the project's config plus the standard complexity limits, and the
+# file-size limit. Every file a pull request changes must be clean; the last line counts what is left in the files
+# nobody has changed yet. Call it from a project:
 #   jobs:
 #     lint:
 #       uses: murphy360/standards/.github/workflows/python-lint.yml@v1
+#       with:
+#         format-check: true
+#         # mode: all        # once the report reads zero: every file, on every run
+#
+# mode: changed (the default) compares with a base. A pull request: its base branch's tip. A push: the commit before
+# the push. Any other event (a schedule, a dispatch, a new branch or tag) has no base: every file is reported and
+# nothing fails. mode: all checks every file on every event.
 name: python-lint
 on:
   workflow_call:
     inputs:
       ruff-version: {type: string, default: "0.6.9", description: "the ruff release, pinned"}
       python-version: {type: string, default: "3.12"}
-      format-check: {type: boolean, default: false, description: "also run ruff format --check"}
+      format-check: {type: boolean, default: false, description: "also check ruff format (the changed files, or every file in mode all)"}
+      mode: {type: string, default: "changed", description: "changed: every file the change touches must be clean; all: every file"}
       working-directory: {type: string, default: "."}
       standards-ref: {type: string, default: "v1", description: "the tag the project pins (the tools come from it)"}
 permissions:
@@ -32,8 +41,34 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
       - run: pip install "ruff==${{ inputs.ruff-version }}"
-      - name: Code rules (ruff, complexity, file size) against the ratchet baseline
-        run: python3 "$GITHUB_WORKSPACE/.standards/tools/code_rules.py"
-      - name: Formatting
-        if: inputs.format-check
+      - name: Code rules (ruff, complexity, file size)
+        env:
+          MODE: ${{ inputs.mode }}
+          FORMAT_CHECK: ${{ inputs.format-check }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          tool="$GITHUB_WORKSPACE/.standards/tools/code_rules.py"
+          format=()
+          [ "$FORMAT_CHECK" = true ] || format=(--no-format)
+          case "$MODE" in
+            all) exec python3 "$tool" --all --no-format ;;  # the next step checks the format of every file
+            changed) ;;
+            *) echo "::error::mode is changed or all, not '$MODE'"; exit 1 ;;
+          esac
+          base=""
+          if [ "$EVENT" = pull_request ]; then
+            base="$PR_BASE"
+          elif [ "$EVENT" = push ] && [ -n "${BEFORE//0/}" ]; then
+            base="$BEFORE"  # all zeros: a new branch or tag, nothing before it
+          fi
+          if [ -z "$base" ]; then
+            echo "::notice::no base to compare with on a $EVENT event: every file is reported, nothing fails"
+            exec python3 "$tool" --all --report-only "${format[@]}"
+          fi
+          git fetch --no-tags --depth=1 origin "$base" || echo "::warning::could not fetch the base $base"
+          CODE_RULES_BASE="$base" exec python3 "$tool" "${format[@]}"
+      - name: Formatting (every file)
+        if: inputs.format-check && inputs.mode == 'all'
         run: ruff format --check .

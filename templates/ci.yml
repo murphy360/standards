@@ -13,6 +13,8 @@ jobs:
     uses: murphy360/standards/.github/workflows/python-lint.yml@v1
     with:
       format-check: true
+      # mode: all      # default `changed`: every file a change touches must be clean. `all`: every file, once
+      #                # `code_rules.py --all --report-only` reads zero.
   shell:
     uses: murphy360/standards/.github/workflows/shell-lint.yml@v1
   workflows:
