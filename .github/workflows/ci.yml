@@ -1,6 +1,7 @@
 # The standards repository checks itself with its own workflows, and tests its tools.
-# `lint` runs python-lint in its default mode (the files a change touches), `lint-all` in mode all (every file):
-# this repository is clean, and a change to the workflow is tried in both modes before any project takes it.
+# `lint` runs python-lint in its default mode, all (every file), and `lint-changed` in mode changed (the files a
+# change touches): this repository is clean, and a change to the workflow is tried in both modes before any project
+# takes it.
 name: ci
 on:
   push:
@@ -14,11 +15,11 @@ jobs:
     with:
       format-check: true
       standards-ref: ${{ github.sha }}
-  lint-all:
+  lint-changed:
     uses: ./.github/workflows/python-lint.yml
     with:
       format-check: true
-      mode: all
+      mode: changed
       standards-ref: ${{ github.sha }}
   shell:
     uses: ./.github/workflows/shell-lint.yml

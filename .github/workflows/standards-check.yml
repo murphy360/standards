@@ -2,12 +2,12 @@
 # commit SHA, and CLAUDE.md exists (tools/check_standards.py).
 #   jobs:
 #     standards:
-#       uses: murphy360/standards/.github/workflows/standards-check.yml@v1
+#       uses: murphy360/standards/.github/workflows/standards-check.yml@v2
 name: standards-check
 on:
   workflow_call:
     inputs:
-      standards-ref: {type: string, default: "v1", description: "the tag the project pins (the tools come from it)"}
+      standards-ref: {type: string, default: "v2", description: "the tag the project pins (the tools come from it)"}
 permissions:
   contents: read
 jobs:

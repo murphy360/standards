@@ -1,8 +1,9 @@
 """The standards' tools on scratch repositories: the code rules and the standards check.
 
-The code rules have no baseline: every file a branch changes must be clean, a file
-nobody changed keeps what it has, and ``--all`` checks every file. The parts that run
-ruff are skipped where ruff is not installed.
+The code rules have no baseline: ``--all`` checks that every file is clean, and
+without it every file a branch changes must be clean. A finding is printed with its
+line, rule and fix; a ``# noqa`` hides nothing and is a problem itself. The parts that
+run ruff are skipped where ruff is not installed.
 """
 
 import importlib.util
@@ -328,7 +329,7 @@ def test_an_old_baseline_file_is_ignored_with_a_note(tmp_path, capsys):
     assert "delete it" in out
 
 
-# --all and --report-only
+# --all
 
 
 @needs_ruff
@@ -349,12 +350,35 @@ def test_all_lists_every_file_that_is_not_clean(tmp_path, capsys):
 
 
 @needs_ruff
-def test_report_only_prints_what_is_left_and_exits_clean(tmp_path, capsys):
+def test_there_is_no_report_only_flag_a_finding_always_fails(tmp_path, capsys):
+    """No flag lets a finding pass: --report-only is gone."""
     root = dirty_base(tmp_path)
-    assert run(root, "--all", "--report-only") == 0
+    with pytest.raises(SystemExit) as refused:
+        run(root, "--all", "--report-only")
+    assert refused.value.code == 2
+    assert run(root, "--all") == 1
+    assert "code_rules: FAILED, 1 problem(s)" in capsys.readouterr().out
+
+
+@needs_ruff
+def test_paths_limit_every_check_to_those_directories(tmp_path, capsys):
+    root = repo(
+        tmp_path,
+        {
+            "src/pkg/clean.py": 'message = "ok"\n',
+            "scratch/dirty.py": LONG,
+            "scratch/big.py": "x = 1\n" * 801,
+        },
+    )
+    commit_base(root)
+    assert run(root, "--all") == 1
+    capsys.readouterr()
+    assert run(root, "--all", "--paths", "src") == 0
+    assert "0 finding(s), 0 file(s) over the size limit" in capsys.readouterr().out
+    assert run(root, "--all", "--paths", "src", "scratch/dirty.py") == 1
     out = capsys.readouterr().out
-    assert "all: pkg/dirty.py: 1 ruff finding(s)" in out
-    assert "code_rules: 1 problem(s), reported only" in out
+    assert "all: scratch/dirty.py: 1 ruff finding(s)" in out
+    assert "scratch/big.py" not in out
 
 
 @needs_ruff
@@ -385,6 +409,99 @@ def test_this_repository_meets_its_own_rules(capsys):
     if not (ROOT / ".git").exists():
         pytest.skip("not a git checkout")
     assert run(ROOT, "--all") == 0, capsys.readouterr().out
+
+
+# each finding with its line, rule and fix
+
+
+@needs_ruff
+def test_a_changed_files_finding_names_its_line_rule_and_fix(tmp_path, capsys):
+    """The log alone says where the finding is and how to fix it."""
+    root = dirty_base(tmp_path)
+    write(root, {"pkg/dirty.py": LONG + 'z = "touched"\n'})
+    commit(root, "touch the dirty file")
+    assert run(root) == 1
+    out = capsys.readouterr().out
+    assert "  pkg/dirty.py:1:89: E501 Line too long" in out
+    assert "Fix: wrap the line to the project's line length" in out
+    assert "code_rules: FAILED, 1 problem(s)" in out
+
+
+@needs_ruff
+def test_all_names_each_finding_and_its_fix(tmp_path, capsys):
+    root = dirty_base(tmp_path)
+    assert run(root, "--all") == 1
+    out = capsys.readouterr().out
+    assert "  pkg/dirty.py:1:89: E501" in out
+    assert "pkg/clean.py" not in out
+
+
+@needs_ruff
+def test_a_file_nobody_changed_is_not_explained(tmp_path, capsys):
+    root = dirty_base(tmp_path)
+    write(root, {"pkg/clean.py": 'message = "changed"\n'})
+    commit(root, "touch only the clean file")
+    assert run(root) == 0
+    assert "Fix:" not in capsys.readouterr().out
+
+
+def test_each_kind_of_rule_has_a_fix():
+    assert "line length" in rules.fix_for("E501")
+    assert "__all__" in rules.fix_for("F401")
+    assert "conftest.py" in rules.fix_for("F811")
+    assert "allows none" in rules.fix_for("RUF100")
+    for code in ("C901", "PLR0912", "PLR0915"):
+        assert "named helpers" in rules.fix_for(code)
+    assert rules.fix_for("B006") == "`ruff rule B006` explains the rule and its fix"
+
+
+def test_at_most_fifty_findings_are_explained():
+    found = [
+        {"rel": "a.py", "line": n, "col": 1, "code": "E501", "message": "long"}
+        for n in range(1, 53)
+    ]
+    lines = rules.explained(found, {"a.py"})
+    assert len(lines) == 51
+    assert lines[0].startswith("  a.py:1:1: E501 long. Fix: ")
+    assert lines[-1] == "  ... and 2 more finding(s)"
+    assert rules.explained(found, {"b.py"}) == []
+
+
+# no noqa: ruff runs with --ignore-noqa, and a noqa comment is a problem
+
+LONG_LITERAL = 'x = "' + "a" * 95 + '"'  # one E501 at 88
+
+
+@needs_ruff
+def test_a_used_noqa_hides_nothing_and_fails(tmp_path, capsys):
+    root = dirty_base(tmp_path)
+    write(root, {"pkg/clean.py": LONG_LITERAL + "  # noqa: E501\n"})
+    commit(root, "hide a long line")
+    assert run(root) == 1
+    out = capsys.readouterr().out
+    assert "changed: pkg/clean.py: 1 ruff finding(s) (E501 1)" in out
+    assert "  pkg/clean.py:1:89: E501" in out
+    assert "noqa: pkg/clean.py:1: a `# noqa` is not allowed" in out
+
+
+@needs_ruff
+def test_a_noqa_comment_fails_even_when_it_hides_nothing(tmp_path, capsys):
+    root = dirty_base(tmp_path)
+    write(root, {"pkg/clean.py": 'message = "ok"  # ruff: noqa\n'})
+    commit(root, "an idle noqa")
+    assert run(root) == 1
+    assert "noqa: pkg/clean.py:1:" in capsys.readouterr().out
+    assert run(root, "--all") == 1
+    assert "noqa: pkg/clean.py:1:" in capsys.readouterr().out
+
+
+@needs_ruff
+def test_the_word_noqa_in_a_string_is_not_a_comment(tmp_path, capsys):
+    root = dirty_base(tmp_path)
+    text = '"""A docstring that mentions # noqa."""\n\nmessage = "# noqa"\n'
+    write(root, {"pkg/clean.py": text})
+    commit(root, "only the text")
+    assert run(root) == 0, capsys.readouterr().out
 
 
 # --format-only: a branch that re-formats files and does nothing else
@@ -561,7 +678,9 @@ def shallow_checkout(tmp_path, origin: Path, commit_sha: str) -> Path:
     return ci
 
 
-def run_lint_step(tmp_path, ci: Path, pr_base: str):
+def run_lint_step(
+    tmp_path, ci: Path, pr_base: str, mode: str = "changed", event: str = "pull_request"
+):
     workspace = tmp_path / "workspace"
     (workspace / ".standards").mkdir(parents=True)
     (workspace / ".standards" / "tools").symlink_to(TOOLS)
@@ -570,9 +689,9 @@ def run_lint_step(tmp_path, ci: Path, pr_base: str):
         "HOME": str(tmp_path),
         "CI": "true",
         "GITHUB_WORKSPACE": str(workspace),
-        "MODE": "changed",
+        "MODE": mode,
         "FORMAT_CHECK": "true",
-        "EVENT": "pull_request",
+        "EVENT": event,
         "PR_BASE": pr_base,
         "BEFORE": "",
     }
@@ -618,6 +737,36 @@ def test_a_pull_request_without_a_merge_commit_uses_its_base_sha(tmp_path):
     assert res.returncode == 0, res.stdout + res.stderr
     assert f"code rules base: {r['base']}, the pull request's base" in res.stdout
     assert "code_rules: 1 changed file(s) checked" in res.stdout
+
+
+@needs_ruff
+def test_mode_all_checks_every_file_of_the_pull_request(tmp_path):
+    """The default: a finding in a file the pull request never touched fails it."""
+    r = moved_on_remote(tmp_path)
+    ci = shallow_checkout(tmp_path, r["origin"], r["merge"])
+    res = run_lint_step(tmp_path, ci, pr_base=r["base"], mode="all")
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "all: pkg/dirty.py: 1 ruff finding(s) (E501 1)" in res.stdout
+    assert "  pkg/dirty.py:1:89: E501" in res.stdout
+
+
+@needs_ruff
+def test_mode_changed_without_a_base_checks_every_file(tmp_path):
+    r = moved_on_remote(tmp_path)
+    ci = shallow_checkout(tmp_path, r["origin"], r["merge"])
+    res = run_lint_step(tmp_path, ci, pr_base="", event="schedule")
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "no base to compare with on a schedule event: every file is checked" in (
+        res.stdout
+    )
+    assert "all: pkg/dirty.py" in res.stdout
+
+
+def test_the_workflow_checks_every_file_by_default():
+    text = (ROOT / ".github" / "workflows" / "python-lint.yml").read_text()
+    assert 'mode: {type: string, default: "all"' in text
+    assert "ratchet" not in text and "--report-only" not in text
+    assert "export CODE_RULES_BASE" in lint_step()
 
 
 # the standards check

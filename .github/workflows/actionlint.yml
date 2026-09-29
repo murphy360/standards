@@ -1,7 +1,7 @@
 # actionlint on the calling project's workflows.
 #   jobs:
 #     workflows:
-#       uses: murphy360/standards/.github/workflows/actionlint.yml@v1
+#       uses: murphy360/standards/.github/workflows/actionlint.yml@v2
 name: actionlint
 on:
   workflow_call:

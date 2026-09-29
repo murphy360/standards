@@ -1,4 +1,4 @@
-# A project's CI from the standards: copy to .github/workflows/ci.yml, keep the jobs that apply, pin @v1.
+# A project's CI from the standards: copy to .github/workflows/ci.yml, keep the jobs that apply, pin @v2.
 name: ci
 on:
   push:
@@ -8,24 +8,25 @@ permissions:
   contents: read
 jobs:
   standards:
-    uses: murphy360/standards/.github/workflows/standards-check.yml@v1
+    uses: murphy360/standards/.github/workflows/standards-check.yml@v2
   lint:
-    uses: murphy360/standards/.github/workflows/python-lint.yml@v1
+    uses: murphy360/standards/.github/workflows/python-lint.yml@v2
     with:
       format-check: true
-      # mode: all      # default `changed`: every file a change touches must be clean. `all`: every file, once
-      #                # `code_rules.py --all --report-only` reads zero.
+      # mode: changed  # default `all`: every file must be clean. `changed`: every file a change touches, while
+      #                # `code_rules.py --all` still lists findings
+      format-only: ${{ contains(github.event.pull_request.labels.*.name, 'format-only') }}
   shell:
-    uses: murphy360/standards/.github/workflows/shell-lint.yml@v1
+    uses: murphy360/standards/.github/workflows/shell-lint.yml@v2
   workflows:
-    uses: murphy360/standards/.github/workflows/actionlint.yml@v1
+    uses: murphy360/standards/.github/workflows/actionlint.yml@v2
   test:
-    uses: murphy360/standards/.github/workflows/test-docker.yml@v1
+    uses: murphy360/standards/.github/workflows/test-docker.yml@v2
     with:
       command: "pytest -q"
   image:
     needs: [lint, test]
-    uses: murphy360/standards/.github/workflows/image.yml@v1
+    uses: murphy360/standards/.github/workflows/image.yml@v2
     with:
       image: my-service
       push: ${{ github.event_name != 'pull_request' }}

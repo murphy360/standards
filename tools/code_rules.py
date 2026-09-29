@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Code rules: every file a pull request changes must be clean.
+"""Code rules: every file is clean.
 
-    python3 code_rules.py                     # the files this branch changes
-    python3 code_rules.py --all               # every file; exit 1 on a problem
-    python3 code_rules.py --all --report-only # what is left; always exit 0
+    python3 code_rules.py --all               # every file: what CI runs by default
+    python3 code_rules.py                     # only the files this branch changes
     python3 code_rules.py --format-only       # prove a branch only re-formats
+    python3 code_rules.py --all --paths src tools   # only these directories
 
 What a clean file is (standard settings; a project changes them only with a reason, in
 its own ruff config):
@@ -13,31 +13,35 @@ its own ruff config):
   defaults otherwise: 88 columns), plus pycodestyle and pyflakes (E, W, F) and three
   complexity limits added on top: McCabe complexity 15 (C901), 15 branches (PLR0912)
   and 60 statements (PLR0915) per function. No finding.
+* **no noqa**: ruff runs with ``--ignore-noqa``, so a ``# noqa`` hides nothing, and a
+  ``# noqa`` or ``# ruff: noqa`` comment in a Python file is a problem of its own.
+  Comments are read with the tokenizer: the words in a string or a docstring pass.
 * **format**: a Python file passes ``ruff format --check`` (``--no-format`` leaves
   this out, for a project that has not re-formatted yet).
 * **size**: a tracked source file (.py .js .ts .tsx .sh) is at most 800 lines, a test
   at most 1200.
 
-The rule: **every file a pull request changes leaves clean**. There is no baseline. A
-finding can only appear in a file somebody changes, and a changed file must be clean,
-so nothing gets worse and no file is shared between pull requests. A project adopts
-the standard with the debt it has and pays it down one changed file at a time. The
-last line of every run counts what is left in the repository; ``--all`` lists it.
-When it reads zero, the project checks every file on every run (``--all``).
+The rule: **every file is clean**, checked on every run with ``--all``. A breach in
+any file fails. There is no baseline and no flag that lets a finding pass. Each
+finding in a file that fails is printed with its line, its rule and how to fix it,
+so the log alone says what to change. The last line counts what the repository holds.
 
-What "changed" means: the files the branch adds or changes against ``origin/main``, or
-against the ref or commit in ``CODE_RULES_BASE`` (the python-lint workflow sets it). A
-renamed file is a changed file; a deleted one is not checked. When the base cannot be
-found, a CI run fails and says how to fetch it (without a base it would check
-nothing); outside CI it is a note.
+Without ``--all`` the rules check only the files the branch changes. A project that
+adopts the standard with debt uses that mode and pays the debt down one changed file
+at a time, then moves to ``--all``. What "changed" means: the files the branch adds or
+changes against ``origin/main``, or against the ref or commit in ``CODE_RULES_BASE``
+(the python-lint workflow sets it). A renamed file is a changed file; a deleted one
+is not checked. When the base cannot be found, a CI run fails and says how to fetch
+it (without a base it would check nothing); outside CI it is a note.
 
-``--format-only`` is for a branch that re-formats files and does nothing else. Such a
-branch changes files that may still carry findings, so the rule above would refuse it.
-It is held to a stricter proof instead: every file it changes is a Python file that
-existed before, passes ``ruff format --check``, and has the same syntax tree as
-before. No code changed, so no behaviour can have. Two things a formatter may rewrite
-are compared by what they mean: a docstring by its text without its indentation, and
-``del (a, b)`` as ``del a, b``.
+``--paths`` limits every check to some directories or files of the repository (the
+default is every tracked file).
+
+``--format-only`` is for a branch that only re-formats files. It proves that no code
+changed: every file the branch changes is a Python file that existed before, passes
+``ruff format --check``, and has the same syntax tree as before, so no behaviour can
+have changed. Two things a formatter may rewrite are compared by what they mean: a
+docstring by its text without its indentation, and ``del (a, b)`` as ``del a, b``.
 
 Standard library only, apart from ruff.
 """
@@ -53,6 +57,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tokenize
 from collections import Counter
 from pathlib import Path
 
@@ -69,6 +74,18 @@ STANDARD = [
     "lint.pylint.max-statements=60",
 ]
 FUNC_RE = re.compile(r"`(\w+)`")
+NOQA_RE = re.compile(r"#\s*(ruff\s*:\s*)?noqa\b", re.IGNORECASE)
+MAX_EXPLAINED = 50
+FIXES = {
+    "E501": "wrap the line to the project's line length (`ruff format` does not wrap "
+    "strings, comments or docstrings: split a string into two literals, re-wrap the "
+    "text)",
+    "F401": "remove the import, or add the name to the module's `__all__` if it is "
+    "re-exported",
+    "F811": "remove the second definition; a shared pytest fixture goes in a "
+    "conftest.py, not in an import",
+    "RUF100": "remove the `# noqa`: the standard allows none",
+}
 PARSE_RE = re.compile(r"Failed to parse (.+?):\d+:\d+:")
 BASE_ENV = "CODE_RULES_BASE"
 DEFAULT_BASE = "origin/main"
@@ -117,11 +134,21 @@ def tracked_files(root: Path) -> list[str]:
     ]
 
 
-def tracked_sources(root: Path) -> list[str]:
+def in_paths(rel: str, paths: tuple[str, ...]) -> bool:
+    """Whether ``rel`` is one of ``paths`` or inside one; every file when none."""
+    if not paths:
+        return True
+    return any(rel == p or rel.startswith(p.rstrip("/") + "/") for p in paths)
+
+
+def tracked_sources(root: Path, paths: tuple[str, ...] = ()) -> list[str]:
     return sorted(
         f
         for f in tracked_files(root)
-        if f.endswith(SUFFIXES) and "/vendor/" not in f and "node_modules" not in f
+        if f.endswith(SUFFIXES)
+        and "/vendor/" not in f
+        and "node_modules" not in f
+        and in_paths(f, paths)
     )
 
 
@@ -144,11 +171,12 @@ def ruff_cmd() -> list[str]:
     return [exe] if exe else [sys.executable, "-m", "ruff"]
 
 
-def ruff_counts(root: Path, keep: set[str] | None = None) -> Counter:
-    """ruff's findings as {"file::rule" or "file::rule::function": count}.
+def ruff_findings(root: Path, keep: set[str] | None = None) -> list[dict]:
+    """ruff's findings, each with its file, line, column, rule and message.
 
     Only the files in ``keep`` count when it is given: the tracked files, so that a
     checkout of the standards' tools beside the project is not counted as the project.
+    ruff runs with ``--ignore-noqa``: a ``# noqa`` hides nothing.
     """
     res = subprocess.run(
         [
@@ -158,6 +186,7 @@ def ruff_counts(root: Path, keep: set[str] | None = None) -> Counter:
             "--output-format",
             "json",
             "--exit-zero",
+            "--ignore-noqa",
             *STANDARD,
             ".",
         ],
@@ -170,18 +199,89 @@ def ruff_counts(root: Path, keep: set[str] | None = None) -> Counter:
             f"code_rules: ruff did not run ({res.stderr.strip()[:300]}); "
             "pip install ruff"
         )
-    counts: Counter = Counter()
+    found = []
     for f in json.loads(res.stdout or "[]"):
         rel = Path(f["filename"]).resolve().relative_to(root.resolve()).as_posix()
         if keep is not None and rel not in keep:
             continue
-        code = f.get("code") or "syntax"
-        key = f"{rel}::{code}"
-        if code in COMPLEXITY:
-            m = FUNC_RE.search(f.get("message") or "")
+        place = f.get("location") or {}
+        found.append(
+            {
+                "rel": rel,
+                "line": place.get("row", 0),
+                "col": place.get("column", 0),
+                "code": f.get("code") or "syntax",
+                "message": f.get("message") or "",
+            }
+        )
+    return found
+
+
+def count_findings(found: list[dict]) -> Counter:
+    """Findings as {"file::rule" or "file::rule::function": count}."""
+    counts: Counter = Counter()
+    for f in found:
+        key = f"{f['rel']}::{f['code']}"
+        if f["code"] in COMPLEXITY:
+            m = FUNC_RE.search(f["message"])
             key += f"::{m.group(1) if m else '?'}"
         counts[key] += 1
     return counts
+
+
+def ruff_counts(root: Path, keep: set[str] | None = None) -> Counter:
+    """ruff's findings as {"file::rule" or "file::rule::function": count}."""
+    return count_findings(ruff_findings(root, keep))
+
+
+def fix_for(code: str) -> str:
+    """How to fix a finding of this rule, in one sentence."""
+    if code in FIXES:
+        return FIXES[code]
+    if code in COMPLEXITY:
+        return "split the function into named helpers, each one step, in the same order"
+    return f"`ruff rule {code}` explains the rule and its fix"
+
+
+def explained(found: list[dict], files: set[str]) -> list[str]:
+    """One line per finding in ``files``: where it is, what it is, how to fix it."""
+    shown = sorted(
+        (f for f in found if f["rel"] in files),
+        key=lambda f: (f["rel"], f["line"], f["col"]),
+    )
+    out = [
+        f"  {f['rel']}:{f['line']}:{f['col']}: {f['code']} {f['message']}. "
+        f"Fix: {fix_for(f['code'])}"
+        for f in shown[:MAX_EXPLAINED]
+    ]
+    if len(shown) > MAX_EXPLAINED:
+        out.append(f"  ... and {len(shown) - MAX_EXPLAINED} more finding(s)")
+    return out
+
+
+def noqa_comments(files: list[str], root: Path) -> list[str]:
+    """Every ``# noqa`` or ``# ruff: noqa`` comment in the Python files.
+
+    Comments are read with the tokenizer, so the words in a string or a docstring
+    are not comments. A file that does not tokenize is left to ruff, which reports it.
+    """
+    out = []
+    for rel in files:
+        path = root / rel
+        if not rel.endswith(".py") or not path.is_file():
+            continue
+        try:
+            with path.open("rb") as fh:
+                tokens = list(tokenize.tokenize(fh.readline))
+        except (tokenize.TokenError, SyntaxError):
+            continue
+        for tok in tokens:
+            if tok.type == tokenize.COMMENT and NOQA_RE.search(tok.string):
+                out.append(
+                    f"noqa: {rel}:{tok.start[0]}: a `# noqa` is not allowed; remove "
+                    "it and fix the finding it hid"
+                )
+    return out
 
 
 def unformatted(files: list[str], root: Path) -> list[str]:
@@ -281,8 +381,9 @@ def detail(rules: Counter) -> str:
     return ", ".join(f"{rule} {n}" for rule, n in sorted(rules.items()))
 
 
-def touched_problems(files: list[str], now: dict) -> list[str]:
-    """A file the branch changes leaves clean: formatted, no finding, not too long."""
+def touched_problems(files: list[str], now: dict, root: Path) -> list[str]:
+    """A file the branch changes is clean: formatted, no finding, no noqa, not too
+    long."""
     touched = set(files)
     out = [
         f"ruff-format: {rel}: fails `ruff format --check`: run `ruff format` on it "
@@ -302,10 +403,10 @@ def touched_problems(files: list[str], now: dict) -> list[str]:
                 f"changed: {rel}: {lines} lines, over its limit "
                 f"{limit_for(rel, *now['limits'])}; split it in this pull request"
             )
-    return out
+    return out + noqa_comments(sorted(touched & set(now["files"])), root)
 
 
-def all_problems(now: dict) -> list[str]:
+def all_problems(now: dict, root: Path) -> list[str]:
     """Every file that is not clean, one line for each reason."""
     out = [
         f"all: {rel}: {sum(rules.values())} ruff finding(s) ({detail(rules)})"
@@ -318,7 +419,7 @@ def all_problems(now: dict) -> list[str]:
     out += [
         f"all: {rel}: fails `ruff format --check`" for rel in now["unformatted"] or ()
     ]
-    return out
+    return out + noqa_comments(now["files"], root)
 
 
 def changed_problems(now: dict, root: Path) -> tuple[list[str], list[str]]:
@@ -329,7 +430,7 @@ def changed_problems(now: dict, root: Path) -> tuple[list[str], list[str]]:
             return [], [note]
         return [missing_base("cannot tell what this branch changed")], []
     notes = [f"code_rules: {len(changed)} changed file(s) checked"]
-    return touched_problems(changed, now), notes
+    return touched_problems(changed, now, root), notes
 
 
 def syntax_tree(source: str) -> str:
@@ -430,20 +531,23 @@ def format_only_problems(root: Path) -> tuple[list[str], list[str]]:
 
 def measure(root: Path, a: argparse.Namespace) -> dict:
     """What is in the repository now: findings, large files, unformatted files."""
-    files = tracked_sources(root)
+    paths = tuple(a.paths)
+    files = tracked_sources(root, paths)
+    keep = {f for f in tracked_files(root) if in_paths(f, paths)}
+    found = ruff_findings(root, keep)
     return {
-        "ruff": dict(ruff_counts(root, set(tracked_files(root)))),
+        "files": files,
+        "found": found,
+        "ruff": dict(count_findings(found)),
         "lines": file_sizes(files, root, a.max_lines, a.max_test_lines),
         "limits": (a.max_lines, a.max_test_lines),
         "unformatted": None if a.no_format else unformatted(files, root),
     }
 
 
-def summary(now: dict, problems: list[str], report_only: bool) -> str:
+def summary(now: dict, problems: list[str]) -> str:
     """The last line: the verdict, and what is left in the repository."""
     verdict = f"FAILED, {len(problems)} problem(s)" if problems else "OK"
-    if problems and report_only:
-        verdict = f"{len(problems)} problem(s), reported only"
     left = [
         f"{sum(now['ruff'].values())} finding(s)",
         f"{len(now['lines'])} file(s) over the size limit",
@@ -468,7 +572,11 @@ def parse_args(argv) -> argparse.Namespace:
         help="check every file, not only the files this branch changes",
     )
     ap.add_argument(
-        "--report-only", action="store_true", help="print the problems and exit 0"
+        "--paths",
+        nargs="+",
+        default=[],
+        metavar="PATH",
+        help="check only these directories or files (default: every tracked file)",
     )
     ap.add_argument(
         "--format-only",
@@ -488,6 +596,12 @@ def parse_args(argv) -> argparse.Namespace:
     return a
 
 
+def problem_file(line: str) -> str:
+    """The file a problem line names ("kind: path: why" or "noqa: path:line: why")."""
+    parts = line.split(": ", 2)
+    return parts[1].split(":")[0] if len(parts) > 1 else ""
+
+
 def main(argv=None) -> int:
     a = parse_args(argv)
     root = Path(a.root).resolve()
@@ -499,17 +613,18 @@ def main(argv=None) -> int:
             "request changes must be clean instead); delete it"
         )
     if a.all:
-        problems = all_problems(now)
+        problems = all_problems(now, root)
     elif a.format_only:
         problems, more = format_only_problems(root)
         notes += more
     else:
         problems, more = changed_problems(now, root)
         notes += more
-    for line in (*problems, *notes):
+    reported = {problem_file(line) for line in problems}
+    for line in (*problems, *explained(now["found"], reported), *notes):
         print(line)
-    print(summary(now, problems, a.report_only))
-    return 1 if problems and not a.report_only else 0
+    print(summary(now, problems))
+    return 1 if problems else 0
 
 
 if __name__ == "__main__":

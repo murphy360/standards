@@ -2,7 +2,7 @@
 # manifest list with the tags the metadata action derives (branch, PR, semver, sha).
 #   jobs:
 #     image:
-#       uses: murphy360/standards/.github/workflows/image.yml@v1
+#       uses: murphy360/standards/.github/workflows/image.yml@v2
 #       with: {image: my-service}
 #       permissions: {contents: read, packages: write}
 name: image
