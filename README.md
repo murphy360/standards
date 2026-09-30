@@ -82,7 +82,7 @@ v2 is a breaking release. What changed, and what a project must do:
 
 ## Versions
 
-Projects pin `@v2`. A compatible change is released as `v1.x.y` and the `v1` tag moves to it; a breaking change is
-`v2`, with release notes saying what a project must change. The tag moves only to a commit whose CI passed here.
+Projects pin `@v2`. A compatible change is released as `v2.x.y` and the `v2` tag moves to it; a breaking change is
+`v3`, with release notes saying what a project must change. The tag moves only to a commit whose CI passed here.
 A change is compatible when no adopter's next ordinary pull request newly fails under it. Before a release, the new
 tools are run against every repository that calls the current major tag.
