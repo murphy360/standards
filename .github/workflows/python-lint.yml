@@ -1,27 +1,34 @@
-# Python lint (tools/code_rules.py): ruff with the project's config plus the standard complexity limits, and the
-# file-size limit. Every file a pull request changes must be clean; the last line counts what is left in the files
-# nobody has changed yet. Call it from a project:
+# Python lint (tools/code_rules.py): ruff with the project's config plus the standard complexity limits, no noqa, and
+# the file-size limit. The standard is that every file is clean: mode all (the default) checks every file on every
+# run, and a finding anywhere fails. Each finding is printed with its line, its rule and how to fix it. Call it from a
+# project:
 #   jobs:
 #     lint:
-#       uses: murphy360/standards/.github/workflows/python-lint.yml@v1
+#       uses: murphy360/standards/.github/workflows/python-lint.yml@v2
 #       with:
 #         format-check: true
-#         # mode: all        # once the report reads zero: every file, on every run
+#         # mode: changed     # a project still paying down its debt: every file a change touches must be clean
+#         # paths: src tools  # only these directories (default: every tracked file)
+#         # format-only: ${{ contains(github.event.pull_request.labels.*.name, 'format-only') }}
 #
-# mode: changed (the default) compares with a base. A pull request: the first parent of the merge commit the job
-# checks out, which is the base branch as the pull request was merged with it (the pull request's base SHA when HEAD
-# is not a merge commit). A push: the commit before the push. Any other event (a schedule, a dispatch, a new branch or tag) has no base: every file is reported and
-# nothing fails. mode: all checks every file on every event.
+# The base. A pull request is compared with the first parent of the merge commit the job checks out: the base branch
+# as the pull request was merged with it (the pull request's base SHA when HEAD is not a merge commit). A push is
+# compared with the commit before the push. The step exports it as CODE_RULES_BASE. Mode changed needs it; with no
+# base (a schedule, a dispatch, a new branch or tag) mode changed checks every file. format-only (a pull request that
+# only re-formats) also needs it: it proves that every file the pull request changes is a Python file with the syntax
+# tree it had.
 name: python-lint
 on:
   workflow_call:
     inputs:
       ruff-version: {type: string, default: "0.6.9", description: "the ruff release, pinned"}
       python-version: {type: string, default: "3.12"}
-      format-check: {type: boolean, default: false, description: "also check ruff format (the changed files, or every file in mode all)"}
-      mode: {type: string, default: "changed", description: "changed: every file the change touches must be clean; all: every file"}
+      format-check: {type: boolean, default: false, description: "also check ruff format, in the same scope as mode"}
+      mode: {type: string, default: "all", description: "all: every file must be clean; changed: every file the change touches"}
+      paths: {type: string, default: "", description: "space-separated directories or files to check (default: every tracked file)"}
+      format-only: {type: boolean, default: false, description: "also prove that this pull request only re-formats Python files"}
       working-directory: {type: string, default: "."}
-      standards-ref: {type: string, default: "v1", description: "the tag the project pins (the tools come from it)"}
+      standards-ref: {type: string, default: "v2", description: "the tag the project pins (the tools come from it)"}
 permissions:
   contents: read
 jobs:
@@ -42,21 +49,24 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
       - run: pip install "ruff==${{ inputs.ruff-version }}"
-      - name: Code rules (ruff, complexity, file size)
+      - name: Code rules (every file, or the files a change touches); ruff, no noqa, complexity, file size, format
         env:
           MODE: ${{ inputs.mode }}
           FORMAT_CHECK: ${{ inputs.format-check }}
+          FORMAT_ONLY: ${{ inputs.format-only }}
+          PATHS: ${{ inputs.paths }}
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           BEFORE: ${{ github.event.before }}
         run: |
           tool="$GITHUB_WORKSPACE/.standards/tools/code_rules.py"
-          format=()
-          [ "$FORMAT_CHECK" = true ] || format=(--no-format)
+          args=()
+          [ "$FORMAT_CHECK" = true ] || args+=(--no-format)
+          read -r -a paths <<< "$PATHS"
+          [ ${#paths[@]} -eq 0 ] || args+=(--paths "${paths[@]}")
           case "$MODE" in
-            all) exec python3 "$tool" --all --no-format ;;  # the next step checks the format of every file
-            changed) ;;
-            *) echo "::error::mode is changed or all, not '$MODE'"; exit 1 ;;
+            all | changed) ;;
+            *) echo "::error::mode is all or changed, not '$MODE'"; exit 1 ;;
           esac
           base=""
           if [ "$EVENT" = pull_request ]; then
@@ -66,21 +76,33 @@ jobs:
             first=$(printf '%s\n' "$parents" | head -1)
             if [ "$(printf '%s\n' "$parents" | grep -c .)" -eq 2 ] \
               && git fetch --no-tags --depth=1 origin "$first"; then
+              base="$first"
               echo "code rules base: $first, the first parent of the merge commit $(git rev-parse HEAD)"
-              CODE_RULES_BASE="$first" exec python3 "$tool" "${format[@]}"
+            else
+              base="$PR_BASE"
+              echo "code rules base: $base, the pull request's base (HEAD is not a merge commit, or its parent did not fetch)"
+              git fetch --no-tags --depth=1 origin "$base" || echo "::warning::could not fetch the base $base"
             fi
-            base="$PR_BASE"
-            echo "code rules base: $base, the pull request's base (HEAD is not a merge commit, or its parent did not fetch)"
           elif [ "$EVENT" = push ] && [ -n "${BEFORE//0/}" ]; then
             base="$BEFORE"  # all zeros: a new branch or tag, nothing before it
             echo "code rules base: $base, the commit before the push"
+            git fetch --no-tags --depth=1 origin "$base" || echo "::warning::could not fetch the base $base"
           fi
-          if [ -z "$base" ]; then
-            echo "::notice::no base to compare with on a $EVENT event: every file is reported, nothing fails"
-            exec python3 "$tool" --all --report-only "${format[@]}"
+          [ -z "$base" ] || export CODE_RULES_BASE="$base"
+          status=0
+          if [ "$MODE" = all ]; then
+            python3 "$tool" --all "${args[@]}" || status=$?
+          elif [ -z "$base" ]; then
+            echo "::notice::no base to compare with on a $EVENT event: every file is checked"
+            python3 "$tool" --all "${args[@]}" || status=$?
+          else
+            python3 "$tool" "${args[@]}" || status=$?
           fi
-          git fetch --no-tags --depth=1 origin "$base" || echo "::warning::could not fetch the base $base"
-          CODE_RULES_BASE="$base" exec python3 "$tool" "${format[@]}"
-      - name: Formatting (every file)
-        if: inputs.format-check && inputs.mode == 'all'
-        run: ruff format --check .
+          if [ "$FORMAT_ONLY" = true ]; then
+            if [ "$EVENT" != pull_request ]; then
+              echo "::notice::format-only proves a pull request; this is a $EVENT event"
+            else
+              python3 "$tool" --format-only "${args[@]}" || status=$?
+            fi
+          fi
+          exit "$status"

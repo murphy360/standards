@@ -1,7 +1,7 @@
 # shellcheck on every tracked *.sh, pinned (no marketplace action on a moving branch).
 #   jobs:
 #     shell:
-#       uses: murphy360/standards/.github/workflows/shell-lint.yml@v1
+#       uses: murphy360/standards/.github/workflows/shell-lint.yml@v2
 name: shell-lint
 on:
   workflow_call:

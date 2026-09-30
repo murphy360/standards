@@ -1,7 +1,7 @@
 # The project's tests inside its own image: build it (target optional) and run the test command in it.
 #   jobs:
 #     test:
-#       uses: murphy360/standards/.github/workflows/test-docker.yml@v1
+#       uses: murphy360/standards/.github/workflows/test-docker.yml@v2
 #       with: {command: "pytest -q"}
 name: test-docker
 on:

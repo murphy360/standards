@@ -2,5 +2,5 @@
 # [tool.ruff] section only for a reason, and says the reason in a comment.
 [project]
 name = "murphy360-standards"
-version = "1.1.0"
+version = "2.0.0"
 requires-python = ">=3.12"
