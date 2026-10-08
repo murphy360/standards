@@ -1,7 +1,8 @@
 # The standards repository checks itself with its own workflows, and tests its tools.
 # `lint` runs python-lint in its default mode, all (every file), and `lint-changed` in mode changed (the files a
 # change touches): this repository is clean, and a change to the workflow is tried in both modes before any project
-# takes it.
+# takes it. One run per ref (concurrency, below), and the new checks (check-pr-template, check-pre-commit-config)
+# are turned on here to prove the opt-in flags work, since this repository now carries both files itself.
 name: ci
 on:
   push:
@@ -9,6 +10,9 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   lint:
     uses: ./.github/workflows/python-lint.yml
@@ -29,8 +33,11 @@ jobs:
     uses: ./.github/workflows/standards-check.yml
     with:
       standards-ref: ${{ github.sha }}
+      check-pr-template: true
+      check-pre-commit-config: true
   tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -38,3 +45,15 @@ jobs:
           python-version: "3.12"
       - run: pip install pytest "ruff==0.6.9"
       - run: python3 -m pytest -q tests
+  result:
+    name: result
+    if: always()
+    needs: [lint, lint-changed, shell, workflows, standards, tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job that ran passed
+        run: |
+          echo '${{ toJSON(needs) }}' > needs.json
+          cat needs.json
+          jq -e 'all(.[]; .result == "success" or .result == "skipped")' needs.json

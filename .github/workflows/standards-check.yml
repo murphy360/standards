@@ -1,18 +1,31 @@
 # Does the calling project follow the standards? Dependabot covers its ecosystems, every action is pinned to a
-# commit SHA, and CLAUDE.md exists (tools/check_standards.py).
+# commit SHA, and CLAUDE.md exists (tools/check_standards.py). Two more checks exist but default off, so a project
+# already pinned at @v2 sees no new failure until it turns one on:
 #   jobs:
 #     standards:
 #       uses: murphy360/standards/.github/workflows/standards-check.yml@v2
+#       with:
+#         check-pr-template: true        # also requires .github/pull_request_template.md
+#         check-pre-commit-config: true  # also requires .pre-commit-config.yaml
 name: standards-check
 on:
   workflow_call:
     inputs:
       standards-ref: {type: string, default: "v2", description: "the tag the project pins (the tools come from it)"}
+      check-pr-template:
+        type: boolean
+        default: false
+        description: "also require .github/pull_request_template.md (opt-in, added in v2.1.0)"
+      check-pre-commit-config:
+        type: boolean
+        default: false
+        description: "also require .pre-commit-config.yaml (opt-in, added in v2.1.0)"
 permissions:
   contents: read
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: The standards' tools, at the version the project pins
@@ -24,4 +37,16 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
-      - run: python3 .standards/tools/check_standards.py
+      - name: Does this repository follow the standards?
+        env:
+          CHECK_PR_TEMPLATE: ${{ inputs.check-pr-template }}
+          CHECK_PRE_COMMIT_CONFIG: ${{ inputs.check-pre-commit-config }}
+        run: |
+          args=()
+          if [ "$CHECK_PR_TEMPLATE" = "true" ]; then
+            args+=(--require-pr-template)
+          fi
+          if [ "$CHECK_PRE_COMMIT_CONFIG" = "true" ]; then
+            args+=(--require-pre-commit)
+          fi
+          python3 .standards/tools/check_standards.py "${args[@]}"

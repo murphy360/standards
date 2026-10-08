@@ -17,6 +17,15 @@ It checks:
   ``murphy360/standards`` at a version tag are allowed.
 * **CLAUDE.md** exists at the root (from the standards' template).
 
+Two more checks exist but default off, so a project already pinned at ``@v2`` sees no
+new failure until it turns one on (``--require-pr-template``, ``--require-pre-commit``;
+the ``standards-check`` workflow's matching inputs, added in v2.1.0):
+
+* **pull request template**: ``.github/pull_request_template.md`` exists (from
+  ``templates/pull_request_template.md``).
+* **pre-commit config**: ``.pre-commit-config.yaml`` exists at the root (from
+  ``templates/pre-commit-config.yaml``).
+
 Standard library only.
 """
 
@@ -117,7 +126,24 @@ def unpinned(root: Path, files: list[str]) -> list[str]:
     return out
 
 
-def check(root: Path) -> list[str]:
+def has_pr_template(files: list[str]) -> bool:
+    """Whether a pull request template exists, wherever GitHub would find it."""
+    for f in files:
+        name = Path(f).name.lower()
+        parent = Path(f).parent.as_posix().lower()
+        if name == "pull_request_template.md" and parent in (".github", ".", "docs"):
+            return True
+        if parent == ".github/pull_request_template" and name.endswith(".md"):
+            return True
+    return False
+
+
+def check(
+    root: Path,
+    *,
+    require_pr_template: bool = False,
+    require_pre_commit: bool = False,
+) -> list[str]:
     files = tracked(root)
     problems = []
     dep = root / ".github" / "dependabot.yml"
@@ -138,14 +164,38 @@ def check(root: Path) -> list[str]:
             "CLAUDE.md is missing "
             "(start from templates/CLAUDE.md in murphy360/standards)"
         )
+    if require_pr_template and not has_pr_template(files):
+        problems.append(
+            ".github/pull_request_template.md is missing "
+            "(copy templates/pull_request_template.md from murphy360/standards)"
+        )
+    if require_pre_commit and ".pre-commit-config.yaml" not in files:
+        problems.append(
+            ".pre-commit-config.yaml is missing "
+            "(copy templates/pre-commit-config.yaml from murphy360/standards)"
+        )
     return problems
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--root", default=".")
+    ap.add_argument(
+        "--require-pr-template",
+        action="store_true",
+        help="also require .github/pull_request_template.md (opt-in, added in v2.1.0)",
+    )
+    ap.add_argument(
+        "--require-pre-commit",
+        action="store_true",
+        help="also require .pre-commit-config.yaml (opt-in, added in v2.1.0)",
+    )
     a = ap.parse_args(argv)
-    problems = check(Path(a.root).resolve())
+    problems = check(
+        Path(a.root).resolve(),
+        require_pr_template=a.require_pr_template,
+        require_pre_commit=a.require_pre_commit,
+    )
     for p in problems:
         print(p)
     print("standards: " + (f"FAILED, {len(problems)} gap(s)" if problems else "OK"))
