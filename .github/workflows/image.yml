@@ -28,6 +28,7 @@ jobs:
       matrix:
         arch: [amd64, arm64]
     runs-on: ${{ matrix.arch == 'arm64' && inputs.arm64-runner || inputs.amd64-runner }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
@@ -59,6 +60,7 @@ jobs:
     if: inputs.push
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       digest: ${{ steps.inspect.outputs.digest }}
     steps:

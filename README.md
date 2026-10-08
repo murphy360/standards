@@ -14,10 +14,14 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `.github/workflows/test-docker.yml` | builds the project's image and runs its tests inside it |
 | `.github/workflows/image.yml` | multi-arch image (amd64 and arm64 on native runners) pushed to ghcr.io as one manifest list |
 | `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix |
-| `tools/check_standards.py` | the checks `standards-check` runs |
-| `templates/ci.yml` | a project's CI calling the workflows |
+| `tools/check_standards.py` | the checks `standards-check` runs; two more (`--require-pr-template`, `--require-pre-commit`) are opt-in |
+| `tools/repo-settings.sh` | applies a repository's settings and its branch ruleset (below); `--dry-run` prints what it would send |
+| `templates/ci.yml` | a project's CI calling the workflows: one run per ref, a fixed-name `result` job to require |
 | `templates/dependabot.yml` | Dependabot for actions, pip, docker and npm, weekly and grouped |
 | `templates/CLAUDE.md` | how an agent session works in a project: worktrees, Docker tests, the definition of done |
+| `templates/pull_request_template.md` | the pull request body from "Definition of done" |
+| `templates/pre-commit-config.yaml` | ruff, ruff format, shellcheck and actionlint, pinned, so a finding is caught before the push |
+| `templates/rulesets/main.json` | the branch ruleset `tools/repo-settings.sh` applies: pull request required, linear history, no force push, the `result` job required, the owner can bypass |
 
 ## The rules
 
@@ -45,8 +49,21 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
   used, and passes it to the tool as `CODE_RULES_BASE`.
 - **Dependencies stay current.** Every third-party action is pinned to a commit SHA with its version in a comment, and
   Dependabot updates the actions, pip, docker and npm dependencies weekly, one grouped pull request per ecosystem.
-  Turn on Dependabot alerts and security updates in each repository's settings.
-- **Agents work the same way everywhere.** `CLAUDE.md` from the template.
+  Turn on Dependabot alerts and security updates in each repository's settings (`tools/repo-settings.sh` does this).
+- **Agents work the same way everywhere.** `CLAUDE.md` from the template: draft until green, ready once, no
+  `git stash` across worktrees, never reset onto a moved base.
+- **Parallel agent work does not queue or collide.** `templates/ci.yml` runs one pipeline per ref: a pull request's
+  superseded run is cancelled, so a second push never waits behind the first, and a push to main always finishes.
+  Every job carries a `timeout-minutes` (a job calling a reusable workflow cannot set its own, so the reusable
+  workflow's job carries it instead), so a stuck job no longer holds a runner for six hours. A single job named
+  `result` depends on the rest; it is the one check a ruleset requires, so a cancelled or skipped job elsewhere
+  never leaves the required check missing. `templates/rulesets/main.json` and `tools/repo-settings.sh` turn this
+  into branch protection: pull request required, linear history, no force push, `result` required, the owner can
+  bypass.
+- **Pre-commit catches a finding before the push.** `templates/pre-commit-config.yaml`: ruff and ruff format at the
+  pin `python-lint.yml` uses, shellcheck, actionlint, and the usual hygiene hooks (merge conflicts, large files,
+  end of file). Every hook pinned to a commit SHA.
+- **The pull request body follows "Definition of done".** `templates/pull_request_template.md`.
 
 ## Adopting it in a project
 
@@ -57,15 +74,30 @@ murphy360/template-python`, which already holds the steps below. An existing pro
    need: the lint job fetches the base it compares with.
 2. Copy `templates/dependabot.yml` to `.github/dependabot.yml`; `standards-check` names any ecosystem left out.
 3. Copy `templates/CLAUDE.md` to `CLAUDE.md` and fill in "This project".
-4. Pin every other action in the project's workflows to a commit SHA.
-5. See what is left: `pip install ruff==0.6.9 && python3 <standards>/tools/code_rules.py --all`.
-6. If anything is left, set `mode: changed` on the lint job until it reads zero, then remove it.
-7. With `format-check: true`, Python files must be formatted too. Re-format everything once, in one `ruff format`
+4. Copy `templates/pull_request_template.md` to `.github/pull_request_template.md`.
+5. Copy `templates/pre-commit-config.yaml` to `.pre-commit-config.yaml`; `pip install pre-commit && pre-commit
+   install` once per checkout. Turn the matching checks on in `standards-check`'s `with:` once both templates are
+   in (`check-pr-template: true`, `check-pre-commit-config: true`): they default off so a project pinned at `@v2`
+   sees no new failure until it opts in.
+6. Pin every other action in the project's workflows to a commit SHA.
+7. See what is left: `pip install ruff==0.6.9 && python3 <standards>/tools/code_rules.py --all`.
+8. If anything is left, set `mode: changed` on the lint job until it reads zero, then remove it.
+9. With `format-check: true`, Python files must be formatted too. Re-format everything once, in one `ruff format`
    pull request, and set `format-only: true` on that run (for example from a `format-only` label): it proves that
    the pull request changes only the layout of Python files.
+10. `tools/repo-settings.sh <owner>/<repo>` (`--dry-run` first): squash merge only, auto-merge and "Update branch"
+    on, Dependabot security updates on, and the branch ruleset (`templates/rulesets/main.json`) applied to the
+    repository.
 
 A project that still has a `code_rules_baseline.json` from `v1.0.0` can delete it: the tool no longer reads it, and
 says so in a note.
+
+### The ruleset's bypass actor
+
+`templates/rulesets/main.json` names the owner as an `actor_type: "User"` bypass actor by numeric GitHub id, not a
+`RepositoryRole`: GitHub's own schema says `OrganizationAdmin` does not apply to a personal repository, and every
+murphy360 project is one. A project under a different owner changes `actor_id` to that owner's numeric id
+(`curl https://api.github.com/users/<login>`, the `id` field).
 
 ### From v1 to v2
 

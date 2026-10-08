@@ -808,3 +808,72 @@ def test_standards_check_finds_every_gap(tmp_path):
     assert standards.check(root) == [
         ".github/dependabot.yml does not watch docker in /app"
     ]
+
+
+# the opt-in pull request template and pre-commit config checks (v2.1.0, default off)
+
+
+def test_pr_template_and_pre_commit_checks_are_off_by_default(tmp_path):
+    root = repo(
+        tmp_path,
+        {
+            ".github/dependabot.yml": (
+                "version: 2\nupdates:\n"
+                "  - package-ecosystem: pip\n    directory: /\n"
+            ),
+            "CLAUDE.md": "x",
+        },
+    )
+    assert standards.check(root) == []
+    assert (
+        standards.check(root, require_pr_template=True, require_pre_commit=True) != []
+    )
+
+
+def test_pr_template_check_finds_it_in_the_usual_places(tmp_path):
+    base = {
+        ".github/dependabot.yml": "version: 2\nupdates:\n",
+        "CLAUDE.md": "x",
+    }
+    root = repo(tmp_path, base)
+    gaps = standards.check(root, require_pr_template=True)
+    assert any("pull_request_template.md is missing" in g for g in gaps)
+
+    root = repo(tmp_path / "b", {**base, ".github/pull_request_template.md": ""})
+    assert standards.check(root, require_pr_template=True) == []
+
+    root = repo(
+        tmp_path / "c",
+        {**base, ".github/PULL_REQUEST_TEMPLATE/bug.md": ""},
+    )
+    assert standards.check(root, require_pr_template=True) == []
+
+
+def test_pre_commit_check_wants_the_file_at_the_root(tmp_path):
+    base = {
+        ".github/dependabot.yml": "version: 2\nupdates:\n",
+        "CLAUDE.md": "x",
+    }
+    root = repo(tmp_path, base)
+    gaps = standards.check(root, require_pre_commit=True)
+    assert any(".pre-commit-config.yaml is missing" in g for g in gaps)
+
+    root = repo(tmp_path / "d", {**base, ".pre-commit-config.yaml": "repos: []\n"})
+    assert standards.check(root, require_pre_commit=True) == []
+
+
+def test_main_wires_the_require_flags(tmp_path, capsys):
+    root = repo(
+        tmp_path,
+        {
+            ".github/dependabot.yml": "version: 2\nupdates:\n",
+            "CLAUDE.md": "x",
+        },
+    )
+    assert standards.main(["--root", str(root)]) == 0
+    assert standards.main(["--root", str(root), "--require-pr-template"]) == 1
+    out = capsys.readouterr().out
+    assert "pull_request_template.md is missing" in out
+    assert standards.main(["--root", str(root), "--require-pre-commit"]) == 1
+    out = capsys.readouterr().out
+    assert ".pre-commit-config.yaml is missing" in out

@@ -1,0 +1,29 @@
+# From templates/pre-commit-config.yaml. Every hook pinned to a commit SHA, its version in a comment, at the pins
+# the workflows use: ruff and ruff format at python-lint.yml's (0.6.9); shellcheck at v0.11.0 (shell-lint.yml's own
+# default is v0.10.0); actionlint at actionlint.yml's (1.7.12).
+#
+#   pip install pre-commit && pre-commit install   # once per checkout
+#   pre-commit run --all-files                     # every hook, on every file
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # v5.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: 75b98813cfb7e663870a28c74366a1e99d7bfe79  # v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: 745eface02aef23e168a8afb6b5737818efbea95  # v0.11.0.1 (shellcheck 0.11.0)
+    hooks:
+      - id: shellcheck
+  - repo: https://github.com/rhysd/actionlint
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # v1.7.12
+    hooks:
+      - id: actionlint-docker
