@@ -27,6 +27,8 @@ jobs:
       standards-ref: ${{ github.sha }}
   shell:
     uses: ./.github/workflows/shell-lint.yml
+    with:
+      runs-on: '["ubuntu-latest"]'   # the JSON-list form a self-hosted runner uses
   workflows:
     uses: ./.github/workflows/actionlint.yml
   standards:

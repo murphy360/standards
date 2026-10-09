@@ -6,14 +6,18 @@ name: actionlint
 on:
   workflow_call:
     inputs:
+      runs-on: {type: string, default: "ubuntu-latest", description: "a runner label, or a JSON list of labels (a self-hosted runner)"}
       actionlint-version: {type: string, default: "1.7.12"}
 permissions:
   contents: read
 jobs:
   actionlint:
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
     timeout-minutes: 10
     steps:
+      - name: Take ownership of the previous job's files (a self-hosted runner)
+        if: runner.environment == 'self-hosted'
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: actionlint
         run: docker run --rm -v "$PWD:/repo" -w /repo "rhysd/actionlint:${{ inputs.actionlint-version }}" -color
