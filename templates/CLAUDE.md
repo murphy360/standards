@@ -34,8 +34,10 @@ on the ticket and take the next one; never guess. Say on the ticket, in one comm
    only to fix a CI failure or a review comment, and batch the fixes into one push.
 6. The PR body: what and why, `Closes #N`, the tests and their output, the docs touched, any known issue with its
    ticket. Open it with `gh pr create --draft --base main`, then comment the link on the ticket.
-7. Never merge, never push to main, never enable auto-merge, unless the owner has said so for this session. An
-   agent never adds the merge label: the owner decides when a pull request merges.
+7. Queue it when it is ready: the owner wants finished pull requests merged. Add the project's merge label
+   (Proteus: `queue`) so its merge train tests and merges it; where a project has no train, squash-merge once the
+   required checks are green. Never push to main, never enable auto-merge, never merge around the checks with an
+   admin bypass. Leave the merge to the owner only when the ticket reserves it or a decision in it.
 
 ## Standards every project keeps (murphy360/standards)
 - CI calls the shared workflows at a pinned version tag: standards-check, python-lint (ruff at its defaults, 88
