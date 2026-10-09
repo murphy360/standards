@@ -23,6 +23,12 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `templates/pre-commit-config.yaml` | ruff, ruff format, shellcheck and actionlint, pinned, so a finding is caught before the push |
 | `templates/rulesets/main.json` | the branch ruleset `tools/repo-settings.sh` applies: pull request required, linear history, no force push, the `result` job required, the owner can bypass |
 
+The four check workflows above (standards-check, python-lint, shell-lint, actionlint) take `runs-on`: GitHub's
+`ubuntu-latest` by default, or a JSON list of labels for a self-hosted runner (`'["ci", "X64"]'`). A private
+project pays for hosted minutes, and each job is billed at least one minute however short, so a project with its own
+runners passes them here. The runner needs Docker; on a self-hosted one each job first takes ownership of files a
+previous job's containers left in the workspace.
+
 ## The rules
 
 - **Style: ruff's defaults.** 88 columns and `ruff format`, the de facto Python standard (Black's line length). A
