@@ -9,21 +9,23 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 |---|---|
 | `.github/workflows/standards-check.yml` | Fails a project that lacks a `.github/dependabot.yml` covering its ecosystems, pins an action to anything but a commit SHA, or has no `CLAUDE.md` |
 | `.github/workflows/python-lint.yml` | ruff with the project's config plus the standard complexity limits, no `# noqa`, and the file-size limit (`tools/code_rules.py`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `ruff format --check` in the same scope; `paths` limits it to some directories; `format-only: true` proves a pull request only re-formats |
+| `.github/workflows/node-lint.yml` | ESLint with the project's config plus the standard complexity limits, and the file-size limit (`tools/code_rules.py --eslint`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `prettier --check` in the same scope; `paths` limits it to some directories. Added in v2.2.0 |
 | `.github/workflows/shell-lint.yml` | shellcheck on every tracked `*.sh`, pinned |
 | `.github/workflows/actionlint.yml` | actionlint on the project's workflows |
 | `.github/workflows/test-docker.yml` | builds the project's image and runs its tests inside it |
 | `.github/workflows/image.yml` | multi-arch image (amd64 and arm64 on native runners) pushed to ghcr.io as one manifest list |
-| `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix |
+| `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix; `--eslint` adds the project's ESLint and `--prettier` adds `prettier --check` |
 | `tools/check_standards.py` | the checks `standards-check` runs; two more (`--require-pr-template`, `--require-pre-commit`) are opt-in |
 | `tools/repo-settings.sh` | applies a repository's settings and its branch ruleset (below); `--dry-run` prints what it would send |
 | `templates/ci.yml` | a project's CI calling the workflows: one run per ref, a fixed-name `result` job to require |
+| `templates/eslint.config.mjs` | the ESLint config a TypeScript project starts from |
 | `templates/dependabot.yml` | Dependabot for actions, pip, docker and npm, weekly and grouped |
 | `templates/CLAUDE.md` | how an agent session works in a project: worktrees, Docker tests, the definition of done |
 | `templates/pull_request_template.md` | the pull request body from "Definition of done" |
 | `templates/pre-commit-config.yaml` | ruff, ruff format, shellcheck and actionlint, pinned, so a finding is caught before the push |
 | `templates/rulesets/main.json` | the branch ruleset `tools/repo-settings.sh` applies: pull request required, linear history, no force push, the `result` job required, the owner can bypass |
 
-The four check workflows above (standards-check, python-lint, shell-lint, actionlint) take `runs-on`: GitHub's
+The check workflows above (standards-check, python-lint, node-lint, shell-lint, actionlint) take `runs-on`: GitHub's
 `ubuntu-latest` by default, or a JSON list of labels for a self-hosted runner (`'["ci", "X64"]'`). A private
 project pays for hosted minutes, and each job is billed at least one minute however short, so a project with its own
 runners passes them here. The runner needs Docker; on a self-hosted one each job first takes ownership of files a
@@ -34,8 +36,13 @@ previous job's containers left in the workspace.
 - **Style: ruff's defaults.** 88 columns and `ruff format`, the de facto Python standard (Black's line length). A
   project changes a setting only with a reason written beside it. Existing projects move to it with one mechanical
   `ruff format` pull request.
+- **JavaScript and TypeScript style: Prettier's defaults.** ESLint recommended and typescript-eslint recommended
+  (`templates/eslint.config.mjs`). ESLint and Prettier are the project's devDependencies, so the lockfile pins them
+  and Dependabot updates them. Complexity is 15, and 60 statements per function, the limits ESLint has. The file-size
+  limit is the same one. `node-lint` checks them the way `python-lint` checks ruff: `mode: all` by default,
+  `mode: changed` while a project pays down debt, and no baseline.
 - **Complexity and size.** McCabe complexity 15, 15 branches and 60 statements per function; 800 lines per source
-  file, 1200 per test.
+  file, 1200 per test. ESLint checks complexity 15 and 60 statements.
 - **Every file is clean.** Every file is formatted, has no ruff finding, keeps every function within the complexity
   limits and is under the size limit. `mode: all`, the default, checks every file on every run, and a finding in any
   file fails it. There is no baseline file and no flag that lets a finding pass.
@@ -43,7 +50,7 @@ previous job's containers left in the workspace.
   comment is a problem of its own. A setting a project really needs goes in its ruff config, with its reason beside
   it.
 - **Each finding says how to fix it.** A file that fails is followed by one line per finding: path, line and column,
-  the rule, ruff's message, and a one-sentence fix. At most 50 are shown.
+  the rule, the linter's message, and a one-sentence fix. At most 50 are shown.
 - **A project with debt.** `mode: changed` checks every file a change touches: a changed file must be clean, a file
   nobody changes keeps what it has, and the last line of every run counts what is left. A project adopts the
   standard with its debt as it is, pays it down one changed file at a time, and drops `mode: changed` when the count
@@ -94,6 +101,12 @@ murphy360/template-python`, which already holds the steps below. An existing pro
 10. `tools/repo-settings.sh <owner>/<repo>` (`--dry-run` first): squash merge only, auto-merge and "Update branch"
     on, Dependabot security updates on, and the branch ruleset (`templates/rulesets/main.json`) applied to the
     repository.
+
+A JavaScript or TypeScript project calls `node-lint` instead of `python-lint`, or as a job of its own. Copy
+`templates/eslint.config.mjs` to `eslint.config.mjs`. Add `eslint`, `@eslint/js`, `typescript-eslint` and `prettier`
+to devDependencies and commit the lockfile. `npm ci` installs them, and Dependabot updates them. The same two modes
+apply, and `format-check: true` runs `prettier --check` on the same files. See what ESLint reports with
+`python3 <standards>/tools/code_rules.py --eslint --all`.
 
 A project that still has a `code_rules_baseline.json` from `v1.0.0` can delete it: the tool no longer reads it, and
 says so in a note.

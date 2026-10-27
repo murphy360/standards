@@ -5,6 +5,7 @@
     python3 code_rules.py                     # only the files this branch changes
     python3 code_rules.py --format-only       # prove a branch only re-formats
     python3 code_rules.py --all --paths src tools   # only these directories
+    python3 code_rules.py --eslint --prettier       # ESLint and prettier, same scope
 
 What a clean file is (standard settings; a project changes them only with a reason, in
 its own ruff config):
@@ -20,6 +21,11 @@ its own ruff config):
   this out, for a project that has not re-formatted yet).
 * **size**: a tracked source file (.py .js .ts .tsx .sh) is at most 800 lines, a test
   at most 1200.
+* **ESLint** (``--eslint``): the project's ESLint from ``node_modules``, with its
+  config, plus complexity 15 and 60 statements. A finding fails like a ruff finding.
+  ruff is skipped when no Python file is tracked.
+* **Prettier** (``--prettier``): ``prettier --check`` in the same scope as the mode.
+  Python stays with ruff.
 
 The rule: **every file is clean**, checked on every run with ``--all``. A breach in
 any file fails. There is no baseline and no flag that lets a finding pass. Each
@@ -43,7 +49,7 @@ changed: every file the branch changes is a Python file that existed before, pas
 have changed. Two things a formatter may rewrite are compared by what they mean: a
 docstring by its text without its indentation, and ``del (a, b)`` as ``del a, b``.
 
-Standard library only, apart from ruff.
+Standard library only, apart from ruff, and ESLint and Prettier when asked for.
 """
 
 from __future__ import annotations
@@ -74,6 +80,16 @@ STANDARD = [
     "lint.pylint.max-statements=60",
 ]
 FUNC_RE = re.compile(r"`(\w+)`")
+JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
+ESLINT_COMPLEXITY = ("complexity", "max-statements")
+ESLINT_RULES = [
+    "--rule",
+    '{"complexity": ["error", 15]}',
+    "--rule",
+    '{"max-statements": ["error", 60]}',
+]
+ESLINT_FUNC_RE = re.compile(r"'([^']+)'")
+PRETTIER_SUFFIXES = JS_SUFFIXES + tuple(".json .md .yml .yaml .css .html .svg".split())
 NOQA_RE = re.compile(r"#\s*(ruff\s*:\s*)?noqa\b", re.IGNORECASE)
 MAX_EXPLAINED = 50
 FIXES = {
@@ -234,8 +250,129 @@ def ruff_counts(root: Path, keep: set[str] | None = None) -> Counter:
     return count_findings(ruff_findings(root, keep))
 
 
-def fix_for(code: str) -> str:
+def node_bin(root: Path, name: str) -> Path:
+    exe = root / "node_modules" / ".bin" / name
+    if exe.exists():
+        return exe
+    raise SystemExit(
+        f"code_rules: node_modules/.bin/{name} not found; "
+        f"add {name} to devDependencies and run npm ci"
+    )
+
+
+def parse_eslint(output: str, root: Path, keep: set[str] | None = None) -> list[dict]:
+    """ESLint JSON errors. A warning is skipped. No rule id means a parse error."""
+    try:
+        data = json.loads(output.strip() or "[]")
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"code_rules: eslint did not return JSON ({e})") from e
+    found, root_r = [], root.resolve()
+    for entry in data:
+        try:
+            rel = Path(entry["filePath"]).resolve().relative_to(root_r).as_posix()
+        except (KeyError, ValueError):
+            continue
+        if keep is not None and rel not in keep:
+            continue
+        for msg in entry.get("messages", []):
+            rule = msg.get("ruleId") or "syntax"
+            if rule != "syntax" and msg.get("severity", 2) < 2:
+                continue
+            func = None
+            if rule in ESLINT_COMPLEXITY:
+                hit = ESLINT_FUNC_RE.search(msg.get("message") or "")
+                func = hit.group(1) if hit else "?"
+            found.append(
+                {
+                    "rel": rel,
+                    "line": msg.get("line") or 0,
+                    "col": msg.get("column") or 0,
+                    "code": rule,
+                    "message": msg.get("message") or "",
+                    "tool": "eslint",
+                    "func": func,
+                }
+            )
+    return found
+
+
+def eslint_count(found: list[dict]) -> Counter:
+    counts: Counter = Counter()
+    for f in found:
+        key = f"{f['rel']}::{f['code']}"
+        if f["code"] in ESLINT_COMPLEXITY:
+            key += f"::{f.get('func') or '?'}"
+        counts[key] += 1
+    return counts
+
+
+def eslint_findings(root: Path, keep: set[str] | None = None) -> list[dict]:
+    res = subprocess.run(
+        [str(node_bin(root, "eslint")), "--format", "json", *ESLINT_RULES, "."],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode not in (0, 1):  # 0 clean, 1 findings; else ESLint did not run
+        err = (res.stderr or res.stdout).strip()[:300]
+        raise SystemExit(f"code_rules: eslint did not run ({err})")
+    return parse_eslint(res.stdout, root, keep)
+
+
+def parse_prettier(stdout: str, stderr: str = "") -> list[str]:
+    out = []
+    for line in f"{stdout}\n{stderr}".splitlines():
+        if line.startswith(("[warn] ", "[error] ")):
+            path = line.split(" ", 1)[1].strip()
+            if path.startswith(("Code style issues", "No parser")):
+                continue
+            if line.startswith("[error] "):
+                path = path.split(":", 1)[0].strip()
+            if " " not in path:
+                out.append(Path(path).as_posix())
+    return out
+
+
+def prettier_unformatted(root: Path, paths: tuple[str, ...]) -> list[str]:
+    """Files that fail ``prettier --check``. Python stays with ruff."""
+    files = sorted(
+        f
+        for f in tracked_files(root)
+        if f.endswith(PRETTIER_SUFFIXES)
+        and "node_modules" not in f
+        and "/vendor/" not in f
+        and in_paths(f, paths)
+        and (root / f).is_file()
+    )
+    if not files:
+        return []
+    exe = str(node_bin(root, "prettier"))
+    found: list[str] = []
+    for i in range(0, len(files), 100):
+        res = subprocess.run(
+            [exe, "--check", *files[i : i + 100]],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode not in (0, 1):
+            err = (res.stderr or res.stdout).strip()[:300]
+            raise SystemExit(f"code_rules: prettier did not run ({err})")
+        found += parse_prettier(res.stdout, res.stderr)
+    return sorted(set(found))
+
+
+def fix_for(code: str, tool: str = "ruff") -> str:
     """How to fix a finding of this rule, in one sentence."""
+    if tool == "eslint":
+        if code in ESLINT_COMPLEXITY:
+            return (
+                "split the function into named helpers, each one step, in the same "
+                "order"
+            )
+        if code == "syntax":
+            return "fix the syntax error so the file parses"
+        return f"the ESLint rule `{code}` says how to fix it"
     if code in FIXES:
         return FIXES[code]
     if code in COMPLEXITY:
@@ -251,7 +388,7 @@ def explained(found: list[dict], files: set[str]) -> list[str]:
     )
     out = [
         f"  {f['rel']}:{f['line']}:{f['col']}: {f['code']} {f['message']}. "
-        f"Fix: {fix_for(f['code'])}"
+        f"Fix: {fix_for(f['code'], f.get('tool', 'ruff'))}"
         for f in shown[:MAX_EXPLAINED]
     ]
     if len(shown) > MAX_EXPLAINED:
@@ -381,6 +518,18 @@ def detail(rules: Counter) -> str:
     return ", ".join(f"{rule} {n}" for rule, n in sorted(rules.items()))
 
 
+def rule_lines(kind: str, counts: dict, label: str, only: set[str] | None) -> list[str]:
+    tail = (
+        "; a file this pull request changes leaves clean" if kind == "changed" else ""
+    )
+    return [
+        f"{kind}: {rel}: {sum(rules.values())} {label} finding(s) "
+        f"({detail(rules)}){tail}"
+        for rel, rules in sorted(findings_by_file(counts).items())
+        if only is None or rel in only
+    ]
+
+
 def touched_problems(files: list[str], now: dict, root: Path) -> list[str]:
     """A file the branch changes is clean: formatted, no finding, no noqa, not too
     long."""
@@ -391,12 +540,13 @@ def touched_problems(files: list[str], now: dict, root: Path) -> list[str]:
         for rel in now["unformatted"] or ()
         if rel in touched
     ]
-    for rel, rules in sorted(findings_by_file(now["ruff"]).items()):
-        if rel in touched:
-            out.append(
-                f"changed: {rel}: {sum(rules.values())} ruff finding(s) "
-                f"({detail(rules)}); a file this pull request changes leaves clean"
-            )
+    out += rule_lines("changed", now["ruff"], "ruff", touched)
+    out += rule_lines("changed", now.get("eslint") or {}, "eslint", touched)
+    out += [
+        f"prettier: {rel}: fails `prettier --check`: run `prettier --write` on it"
+        for rel in now.get("prettier") or ()
+        if rel in touched
+    ]
     for rel, lines in sorted(now["lines"].items()):
         if rel in touched:
             out.append(
@@ -408,16 +558,17 @@ def touched_problems(files: list[str], now: dict, root: Path) -> list[str]:
 
 def all_problems(now: dict, root: Path) -> list[str]:
     """Every file that is not clean, one line for each reason."""
-    out = [
-        f"all: {rel}: {sum(rules.values())} ruff finding(s) ({detail(rules)})"
-        for rel, rules in sorted(findings_by_file(now["ruff"]).items())
-    ]
+    out = rule_lines("all", now["ruff"], "ruff", None)
+    out += rule_lines("all", now.get("eslint") or {}, "eslint", None)
     out += [
         f"all: {rel}: {lines} lines, over its limit {limit_for(rel, *now['limits'])}"
         for rel, lines in sorted(now["lines"].items())
     ]
     out += [
         f"all: {rel}: fails `ruff format --check`" for rel in now["unformatted"] or ()
+    ]
+    out += [
+        f"all: {rel}: fails `prettier --check`" for rel in now.get("prettier") or ()
     ]
     return out + noqa_comments(now["files"], root)
 
@@ -534,26 +685,33 @@ def measure(root: Path, a: argparse.Namespace) -> dict:
     paths = tuple(a.paths)
     files = tracked_sources(root, paths)
     keep = {f for f in tracked_files(root) if in_paths(f, paths)}
-    found = ruff_findings(root, keep)
+    py = any(f.endswith(".py") for f in files)
+    found = ruff_findings(root, keep) if py else []
+    eslint = eslint_findings(root, keep) if a.eslint else []
     return {
         "files": files,
-        "found": found,
+        "found": found + eslint,
         "ruff": dict(count_findings(found)),
+        "eslint": dict(eslint_count(eslint)),
         "lines": file_sizes(files, root, a.max_lines, a.max_test_lines),
         "limits": (a.max_lines, a.max_test_lines),
-        "unformatted": None if a.no_format else unformatted(files, root),
+        "unformatted": None if a.no_format or not py else unformatted(files, root),
+        "prettier": prettier_unformatted(root, paths) if a.prettier else None,
     }
 
 
 def summary(now: dict, problems: list[str]) -> str:
     """The last line: the verdict, and what is left in the repository."""
     verdict = f"FAILED, {len(problems)} problem(s)" if problems else "OK"
+    findings = sum(now["ruff"].values()) + sum(now.get("eslint", {}).values())
     left = [
-        f"{sum(now['ruff'].values())} finding(s)",
+        f"{findings} finding(s)",
         f"{len(now['lines'])} file(s) over the size limit",
     ]
     if now["unformatted"] is not None:
         left.append(f"{len(now['unformatted'])} file(s) not formatted")
+    if now.get("prettier") is not None:
+        left.append(f"{len(now['prettier'])} file(s) failing prettier")
     return f"code_rules: {verdict} (left in the repository: {', '.join(left)})"
 
 
@@ -587,6 +745,16 @@ def parse_args(argv) -> argparse.Namespace:
         "--no-format",
         action="store_true",
         help="leave `ruff format --check` out (a project not re-formatted yet)",
+    )
+    ap.add_argument(
+        "--eslint",
+        action="store_true",
+        help="also run the project's ESLint (JavaScript and TypeScript)",
+    )
+    ap.add_argument(
+        "--prettier",
+        action="store_true",
+        help="also run prettier --check, in the same scope as the mode",
     )
     a = ap.parse_args(argv)
     if a.all and a.format_only:
