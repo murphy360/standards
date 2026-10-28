@@ -89,7 +89,8 @@ ESLINT_RULES = [
     '{"max-statements": ["error", 60]}',
 ]
 ESLINT_FUNC_RE = re.compile(r"'([^']+)'")
-PRETTIER_SUFFIXES = JS_SUFFIXES + tuple(".json .md .yml .yaml .css .html .svg".split())
+# No .svg: prettier has no SVG parser, so an icon would stop the whole run.
+PRETTIER_SUFFIXES = JS_SUFFIXES + tuple(".json .md .yml .yaml .css .html".split())
 NOQA_RE = re.compile(r"#\s*(ruff\s*:\s*)?noqa\b", re.IGNORECASE)
 MAX_EXPLAINED = 50
 FIXES = {
@@ -350,7 +351,7 @@ def prettier_unformatted(root: Path, paths: tuple[str, ...]) -> list[str]:
     found: list[str] = []
     for i in range(0, len(files), 100):
         res = subprocess.run(
-            [exe, "--check", *files[i : i + 100]],
+            [exe, "--check", "--ignore-unknown", *files[i : i + 100]],
             cwd=root,
             capture_output=True,
             text=True,
