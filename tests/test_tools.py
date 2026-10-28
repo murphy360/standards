@@ -967,6 +967,21 @@ def test_prettier_needs_the_projects_prettier(tmp_path, monkeypatch):
         run(root, "--eslint", "--prettier")
 
 
+def test_prettier_skips_files_it_has_no_parser_for(tmp_path):
+    root = repo(
+        tmp_path,
+        {"web/src/a.ts": "export const a = 1;\n", "web/public/icon.svg": "<svg/>\n"},
+    )
+    exe = root / "node_modules" / ".bin" / "prettier"
+    exe.parent.mkdir(parents=True)
+    exe.write_text('#!/bin/sh\necho "$@" > "$(dirname "$0")/args"\n')
+    exe.chmod(0o755)
+    assert rules.prettier_unformatted(root, ()) == []
+    args = (exe.parent / "args").read_text().split()
+    assert "--ignore-unknown" in args
+    assert "web/src/a.ts" in args and "web/public/icon.svg" not in args
+
+
 def test_standards_check_finds_every_gap(tmp_path):
     wf = (
         "jobs:\n  a:\n    steps:\n"
