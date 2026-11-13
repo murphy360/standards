@@ -4,6 +4,7 @@ Every repository here is made up. No test calls GitHub or ``gh``: the function
 that fetches, the one that clones and the one that looks for ruff are injected.
 """
 
+import importlib
 import json
 import re
 import subprocess
@@ -15,10 +16,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tools"))
-
-import fleet
-import fleet_rehearsal
+sys.path.insert(0, str(ROOT / "tools"))  # fleet.py imports its sibling module
+fleet = importlib.import_module("fleet")
+fleet_rehearsal = importlib.import_module("fleet_rehearsal")
 
 NOW = datetime(2026, 11, 13, 12, 0, tzinfo=timezone.utc)
 SHA = "0123456789abcdef0123456789abcdef01234567"

@@ -48,8 +48,8 @@ WORST = ("error", "FAIL", "debt", "pass", "-")
 
 def docker_hint(ref: str) -> str:
     """What to run where ruff is not installed: the same rehearsal in a container."""
-    return f"""ruff is not on PATH, and code_rules.py needs it. Run the rehearsal in Docker,
-from the root of this repository:
+    return f"""ruff is not on PATH, and code_rules.py needs it.
+Run the rehearsal in Docker, from the root of this repository:
 
   GH_TOKEN="$(gh auth token)" docker run --rm -e GH_TOKEN \\
     -e DEBIAN_FRONTEND=noninteractive -e PIP_DISABLE_PIP_VERSION_CHECK=1 \\
