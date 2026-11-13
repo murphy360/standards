@@ -37,6 +37,7 @@ jobs:
     with:
       check-pr-template: true
       check-pre-commit-config: true
+      check-ticket-template: true   # this repository files its tickets from its own template
   node:
     uses: ./.github/workflows/node-lint.yml
     with:

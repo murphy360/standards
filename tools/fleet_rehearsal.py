@@ -42,6 +42,7 @@ RUFF = "0.6.9"  # the ruff python-lint.yml pins (a test keeps the two in step)
 CHECK_FLAGS = (
     ("check-pr-template", "--require-pr-template"),
     ("check-pre-commit-config", "--require-pre-commit"),
+    ("check-ticket-template", "--require-ticket-template"),
 )
 WORST = ("error", "FAIL", "debt", "pass", "-")
 
