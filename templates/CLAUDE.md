@@ -25,6 +25,7 @@ on the ticket and take the next one; never guess. Say on the ticket, in one comm
 - Tests run in the project's Docker image, not on the host. Build it under your own tag so parallel sessions never
   overwrite each other's images.
 - Never touch the owner's running services, stacks or devices unless the ticket says so.
+- Where the project has `.claude/settings.json`, Claude Code refuses the git and gh commands these rules forbid.
 
 ## Definition of done: one pull request
 

@@ -25,6 +25,9 @@ the ``standards-check`` workflow's matching inputs, added in v2.1.0):
   ``templates/pull_request_template.md``).
 * **pre-commit config**: ``.pre-commit-config.yaml`` exists at the root (from
   ``templates/pre-commit-config.yaml``).
+* **agent settings** (``--require-agent-settings``, also default off):
+  ``.claude/settings.json`` runs the guard as a ``PreToolUse`` hook on the shell tool,
+  and the guard file it names exists (from ``templates/claude/``).
 
 Standard library only.
 """
@@ -32,6 +35,7 @@ Standard library only.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -42,6 +46,7 @@ SHA_RE = re.compile(r"@[0-9a-f]{40}$")
 STANDARDS_RE = re.compile(
     r"^murphy360/standards/\.github/workflows/[\w.-]+\.ya?ml@v\d+(\.\d+){0,2}$"
 )
+GUARD_RE = re.compile(r"CLAUDE_PROJECT_DIR\}?[\"']?/(\.claude/[\w./-]*guard[\w.-]*)")
 ECOSYSTEM_FILES = {
     "pip": ("pyproject.toml", "requirements.txt", "requirements-dev.txt", "setup.py"),
     "docker": ("Dockerfile",),
@@ -138,11 +143,53 @@ def has_pr_template(files: list[str]) -> bool:
     return False
 
 
+def guard_files(settings: dict) -> list[str]:
+    """The guard files the ``PreToolUse`` hooks on the shell tool run."""
+    found = []
+    hooks = settings.get("hooks")
+    groups = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+    for group in groups if isinstance(groups, list) else []:
+        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+            continue
+        matcher = group.get("matcher") or "*"
+        if matcher != "*" and "Bash" not in matcher:
+            continue
+        for hook in group["hooks"]:
+            if isinstance(hook, dict) and isinstance(hook.get("args", []), list):
+                words = [hook.get("command"), *hook.get("args", [])]
+                found += GUARD_RE.findall(" ".join(w for w in words if w))
+    return found
+
+
+def agent_settings_gaps(root: Path, files: list[str]) -> list[str]:
+    """What keeps ``.claude/settings.json`` from refusing the never-rules."""
+    name = ".claude/settings.json"
+    source = "from templates/claude in murphy360/standards"
+    if name not in files:
+        return [f"{name} is missing (copy settings.json and guard.py {source})"]
+    try:
+        settings = json.loads((root / name).read_text())
+    except (OSError, ValueError) as error:
+        return [f"{name} is not valid JSON ({error})"]
+    guards = guard_files(settings) if isinstance(settings, dict) else []
+    if not guards:
+        return [
+            f"{name} has no PreToolUse hook on Bash that runs the guard "
+            f"(copy settings.json {source})"
+        ]
+    return [
+        f"{name} runs {guard}, which is missing (copy guard.py {source})"
+        for guard in guards
+        if guard not in files
+    ]
+
+
 def check(
     root: Path,
     *,
     require_pr_template: bool = False,
     require_pre_commit: bool = False,
+    require_agent_settings: bool = False,
 ) -> list[str]:
     files = tracked(root)
     problems = []
@@ -174,6 +221,8 @@ def check(
             ".pre-commit-config.yaml is missing "
             "(copy templates/pre-commit-config.yaml from murphy360/standards)"
         )
+    if require_agent_settings:
+        problems += agent_settings_gaps(root, files)
     return problems
 
 
@@ -190,11 +239,17 @@ def main(argv=None) -> int:
         action="store_true",
         help="also require .pre-commit-config.yaml (opt-in, added in v2.1.0)",
     )
+    ap.add_argument(
+        "--require-agent-settings",
+        action="store_true",
+        help="also require .claude/settings.json with the guard hook (opt-in)",
+    )
     a = ap.parse_args(argv)
     problems = check(
         Path(a.root).resolve(),
         require_pr_template=a.require_pr_template,
         require_pre_commit=a.require_pre_commit,
+        require_agent_settings=a.require_agent_settings,
     )
     for p in problems:
         print(p)
