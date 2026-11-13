@@ -19,10 +19,11 @@ It checks:
   tool reads (from the standards' template), with or without a ``CLAUDE.md`` that
   imports it. A project that has only ``CLAUDE.md`` passes too.
 
-Four more checks exist but default off, so a project already pinned at ``@v2`` sees no
+Five more checks exist but default off, so a project already pinned at ``@v2`` sees no
 new failure until it turns one on (``--require-pr-template``, ``--require-pre-commit``,
-``--require-ticket-template``, ``--require-current-templates``; the ``standards-check``
-workflow has a matching input for each):
+``--require-ticket-template``, ``--require-current-templates``,
+``--require-agent-settings``; the ``standards-check`` workflow has a matching input for
+each):
 
 * **pull request template**: ``.github/pull_request_template.md`` exists (from
   ``templates/pull_request_template.md``).
@@ -35,6 +36,9 @@ workflow has a matching input for each):
   this file, so the tool and the template are one version), a ``CLAUDE.md`` beside an
   ``AGENTS.md`` imports it, and a workflow has a job named ``result``, the check the
   ruleset requires. ``sync_templates.py`` is the fix.
+* **agent settings**: ``.claude/settings.json`` runs the guard as a ``PreToolUse``
+  hook on the shell tool, and the guard file it names exists (from
+  ``templates/claude/``).
 
 Standard library only.
 """
@@ -43,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import re
 import subprocess
 import sys
@@ -54,6 +59,7 @@ STANDARDS_RE = re.compile(
     r"^murphy360/standards/\.github/workflows/[\w.-]+\.ya?ml@v\d+(\.\d+){0,2}$"
 )
 INSTRUCTIONS = ("AGENTS.md", "CLAUDE.md")  # either is the instruction file
+GUARD_RE = re.compile(r"CLAUDE_PROJECT_DIR\}?[\"']?/(\.claude/[\w./-]*guard[\w.-]*)")
 ECOSYSTEM_FILES = {
     "pip": ("pyproject.toml", "requirements.txt", "requirements-dev.txt", "setup.py"),
     "docker": ("Dockerfile",),
@@ -197,6 +203,47 @@ def stale_templates(root: Path, files: list[str]) -> list[str]:
     return problems
 
 
+def guard_files(settings: dict) -> list[str]:
+    """The guard files the ``PreToolUse`` hooks on the shell tool run."""
+    found = []
+    hooks = settings.get("hooks")
+    groups = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+    for group in groups if isinstance(groups, list) else []:
+        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+            continue
+        matcher = group.get("matcher") or "*"
+        if matcher != "*" and "Bash" not in matcher:
+            continue
+        for hook in group["hooks"]:
+            if isinstance(hook, dict) and isinstance(hook.get("args", []), list):
+                words = [hook.get("command"), *hook.get("args", [])]
+                found += GUARD_RE.findall(" ".join(w for w in words if w))
+    return found
+
+
+def agent_settings_gaps(root: Path, files: list[str]) -> list[str]:
+    """What keeps ``.claude/settings.json`` from refusing the never-rules."""
+    name = ".claude/settings.json"
+    source = "from templates/claude in murphy360/standards"
+    if name not in files:
+        return [f"{name} is missing (copy settings.json and guard.py {source})"]
+    try:
+        settings = json.loads((root / name).read_text())
+    except (OSError, ValueError) as error:
+        return [f"{name} is not valid JSON ({error})"]
+    guards = guard_files(settings) if isinstance(settings, dict) else []
+    if not guards:
+        return [
+            f"{name} has no PreToolUse hook on Bash that runs the guard "
+            f"(copy settings.json {source})"
+        ]
+    return [
+        f"{name} runs {guard}, which is missing (copy guard.py {source})"
+        for guard in guards
+        if guard not in files
+    ]
+
+
 def check(
     root: Path,
     *,
@@ -204,6 +251,7 @@ def check(
     require_pre_commit: bool = False,
     require_ticket_template: bool = False,
     require_current_templates: bool = False,
+    require_agent_settings: bool = False,
 ) -> list[str]:
     files = tracked(root)
     problems = []
@@ -242,6 +290,8 @@ def check(
         )
     if require_current_templates:
         problems += stale_templates(root, files)
+    if require_agent_settings:
+        problems += agent_settings_gaps(root, files)
     return problems
 
 
@@ -270,6 +320,11 @@ def main(argv=None) -> int:
         "template's, a CLAUDE.md beside an AGENTS.md to import it, and a CI job "
         "named `result` (opt-in)",
     )
+    ap.add_argument(
+        "--require-agent-settings",
+        action="store_true",
+        help="also require .claude/settings.json with the guard hook (opt-in)",
+    )
     a = ap.parse_args(argv)
     problems = check(
         Path(a.root).resolve(),
@@ -277,6 +332,7 @@ def main(argv=None) -> int:
         require_pre_commit=a.require_pre_commit,
         require_ticket_template=a.require_ticket_template,
         require_current_templates=a.require_current_templates,
+        require_agent_settings=a.require_agent_settings,
     )
     for p in problems:
         print(p)

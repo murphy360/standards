@@ -21,6 +21,7 @@ jobs:
     #   check-pre-commit-config: true  # also requires .pre-commit-config.yaml
     #   check-ticket-template: true    # also requires an issue template in .github/ISSUE_TEMPLATE
     #   check-templates: true          # the shared text of AGENTS.md is the template's (tools/sync_templates.py)
+    #   check-agent-settings: true     # also requires .claude/settings.json with the guard hook
   lint:
     uses: murphy360/standards/.github/workflows/python-lint.yml@v2
     with:
