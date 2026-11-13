@@ -18,6 +18,7 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `tools/check_standards.py` | the checks `standards-check` runs; two more (`--require-pr-template`, `--require-pre-commit`) are opt-in |
 | `tools/agent_app.py` | gives each agent its own GitHub identity (a GitHub App): the link that creates it, a one-hour token, the commit author lines |
 | `tools/repo-settings.sh` | applies a repository's settings and its branch ruleset (below); `--dry-run` prints what it would send |
+| `tools/fleet.py` | the fleet report: one row per repository, with the version of the standard it follows and what it lacks; `--run-tools <ref>` is the rehearsal before a release ("The fleet report", below) |
 | `templates/ci.yml` | a project's CI calling the workflows: one run per ref, a fixed-name `result` job to require |
 | `templates/eslint.config.mjs` | the ESLint config a TypeScript project starts from |
 | `templates/dependabot.yml` | Dependabot for actions, pip, docker and npm, weekly and grouped |
@@ -165,5 +166,44 @@ v2 is a breaking release. What changed, and what a project must do:
 
 Projects pin `@v2`. A compatible change is released as `v2.x.y` and the `v2` tag moves to it; a breaking change is
 `v3`, with release notes saying what a project must change. The tag moves only to a commit whose CI passed here.
-A change is compatible when no adopter's next ordinary pull request newly fails under it. Before a release, the new
-tools are run against every repository that calls the current major tag.
+A change is compatible when no adopter's next ordinary pull request newly fails under it. The step before a release
+is the rehearsal: `python3 tools/fleet.py --run-tools <ref>` runs the new tools, as they are at `<ref>`, against
+every repository that calls the standard's workflows.
+
+### The fleet report
+
+`python3 tools/fleet.py` prints one table, a row per repository of the owner that is not archived. A row shows the
+workflows the repository calls and at which ref (`v2`, an older major, or a commit SHA), its lint mode, whether a
+caller passes `format-only`, the templates it has, whether a CI job is named `result`, whether the `main` ruleset is
+applied, and its open Dependabot pull requests with the age of the oldest. Under the table it counts the adopters at
+the current major, at an older major and at a commit SHA, and the repositories outside the standard. `--json` prints
+the same for a program, `--repo <name>` keeps one repository, and `--owner` names another owner. It needs `gh`,
+signed in.
+
+A repository that stays outside the standard says so with the repository topic `no-standards`
+(`gh repo edit <owner>/<repo> --add-topic no-standards`). No list of names is kept here.
+
+The report is printed and never written to a file. This repository is public and most of the repositories the
+report names are private: do not commit its output, and do not paste it in a pull request or a ticket. Counts are
+fine.
+
+`--run-tools <ref>` is the rehearsal. It takes `tools/` of this checkout at `<ref>` (a tag, a branch or a commit),
+clones each adopter into a temporary directory, and runs the tools the way the adopter's workflows would:
+`code_rules.py --all` for a caller of `python-lint`, with its `format-check`, `paths` and `working-directory`, and
+`check_standards.py` for a caller of `standards-check`, with the checks it turned on. It prints pass or FAIL for
+each repository with the last line of each tool, deletes the clones, and exits 1 when a repository fails. `debt`
+is a failure of `code_rules.py --all` in a repository that lints in `mode: changed`: its pull requests check only
+the files they touch. Run it at the current tag first to see what fails already. `node-lint` is not rehearsed.
+
+`code_rules.py` needs ruff. Where ruff is not installed the rehearsal stops and prints this command, which runs it
+in Docker from the root of this repository:
+
+```sh
+GH_TOKEN="$(gh auth token)" docker run --rm -e GH_TOKEN \
+  -e DEBIAN_FRONTEND=noninteractive -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
+  -v "$PWD:/standards:ro" -w /standards python:3.12-slim sh -c '
+    apt-get -qq update && apt-get -qq install -y git gh >/dev/null &&
+    pip install -q --root-user-action=ignore ruff==0.6.9 &&
+    git config --global --add safe.directory /standards &&
+    python tools/fleet.py --run-tools <ref>'
+```
