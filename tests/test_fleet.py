@@ -251,14 +251,14 @@ def test_lint_mode_and_format_only():
 
 def test_templates_are_read_from_the_names_in_the_root_and_dot_github():
     assert by_name("alpha")["templates"] == {
-        "CLAUDE.md": True,
+        "instructions": True,
         "dependabot": True,
         "pre-commit": True,
         "pr-template": True,  # GitHub takes the name in either case
         "result": True,
     }
     assert by_name("bravo")["templates"] == {
-        "CLAUDE.md": True,
+        "instructions": True,
         "dependabot": False,
         "pre-commit": False,
         "pr-template": False,
@@ -350,7 +350,7 @@ def test_table_has_a_row_per_repository_and_a_column_per_workflow_called():
         "standards",
         "lint",
         "format-only",
-        "CLAUDE.md",
+        "instructions",
         "dependabot",
         "pre-commit",
         "pr-template",
@@ -365,9 +365,11 @@ def test_table_has_a_row_per_repository_and_a_column_per_workflow_called():
     assert [c[0] for c in cells] == ["alpha", "bravo", "charlie", "delta", "echo"]
     assert cells[0][1:] == (
         ["-", "v2", SHA[:7], "v2", "changed", "yes"]
-        + ["yes", "yes", "yes", "yes", "yes", "yes", "2", "41d", "-"]
+        + ["CLAUDE.md", "yes", "yes", "yes", "yes", "yes", "2", "41d", "-"]
     )
-    assert cells[1][1:] == ["-", "v1", "-", "-", "all", "-", "yes"] + ["-"] * 4 + [
+    assert cells[1][1:] == ["-", "v1", "-", "-", "all", "-", "CLAUDE.md"] + [
+        "-"
+    ] * 4 + [
         "?",
         "0",
         "-",

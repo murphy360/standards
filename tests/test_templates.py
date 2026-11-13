@@ -2,8 +2,10 @@
 
 ``check_standards.py --require-current-templates`` compares the shared text of a
 project's ``CLAUDE.md`` or ``AGENTS.md`` with the template beside the tool, and
-``sync_templates.py`` rewrites it. Every project here is made up, in a scratch
-directory: no network.
+``sync_templates.py`` rewrites it. The projects here keep the shared text in
+``CLAUDE.md``, as every project did before the template moved to ``AGENTS.md``;
+tests/test_agents_md.py holds the projects that moved. Every project here is made
+up, in a scratch directory: no network.
 """
 
 import importlib
@@ -20,9 +22,9 @@ standards = importlib.import_module("check_standards")
 sync = importlib.import_module("sync_templates")
 fleet_rehearsal = importlib.import_module("fleet_rehearsal")
 
-TEMPLATE = (ROOT / "templates" / "CLAUDE.md").read_text()
+TEMPLATE = (ROOT / "templates" / sync.template()["name"]).read_text()
 _lines = TEMPLATE.splitlines(keepends=True)
-_begin, _end = sync.markers(_lines, "templates/CLAUDE.md")
+_begin, _end = sync.markers(_lines, "templates/AGENTS.md")
 BEGIN, END = _lines[_begin], _lines[_end]
 SHARED = "".join(_lines[_begin + 1 : _end])
 TITLE = "# Working on demo\n\n"
@@ -91,7 +93,7 @@ def test_the_template_holds_the_shared_text_between_two_invisible_markers():
 
 
 def test_the_template_block_is_read_from_whichever_file_holds_the_markers(tmp_path):
-    """Ready for the shared text moving to templates/AGENTS.md."""
+    """Made-up templates: the block is found by its markers, not by a file name."""
     templates = tmp_path / "templates"
     templates.mkdir()
     (templates / "CLAUDE.md").write_text("@AGENTS.md\n")
@@ -126,7 +128,7 @@ def test_an_old_block_fails_and_names_the_file_the_lines_and_the_command(tmp_pat
     root = project(tmp_path, {"CLAUDE.md": claude(old())})
     (problem,) = check(root)
     first, *shown = problem.splitlines()
-    assert first.startswith("CLAUDE.md: the shared text is behind templates/CLAUDE.md")
+    assert first.startswith("CLAUDE.md: the shared text is behind templates/AGENTS.md")
     assert "`python3 <standards>/tools/sync_templates.py .`" in first
     assert shown[0] == "  here:     - An old rule the template no longer has."
     assert shown[1].startswith("  template: - ")
@@ -225,10 +227,10 @@ def test_sync_rewrites_only_the_block_and_keeps_the_rest_byte_for_byte(
     assert after == claude(begin=begin)
     assert check(root) == []
     out = capsys.readouterr().out.splitlines()
-    assert out[0] == "CLAUDE.md: the shared text was rewritten from templates/CLAUDE.md"
+    assert out[0] == "CLAUDE.md: the shared text was rewritten from templates/AGENTS.md"
     assert out[1].startswith("  here:     ") and out[-1].endswith("1 change(s) made")
     assert sync.main([str(root)]) == 0  # a second run has nothing to do
-    assert capsys.readouterr().out == "sync_templates: nothing to change\n"
+    assert capsys.readouterr().out.endswith("\nsync_templates: nothing to change\n")
     assert (root / "CLAUDE.md").read_bytes().decode() == after
 
 
@@ -261,7 +263,7 @@ def test_a_file_without_markers_is_never_guessed_at(tmp_path, capsys):
     root = project(tmp_path, {"CLAUDE.md": before})
     assert sync.main([str(root)]) == 1
     out = capsys.readouterr().out
-    assert "CLAUDE.md: it has no markers, so nothing was changed" in out
+    assert "CLAUDE.md: it has no markers, so its text was not changed" in out
     assert BEGIN.strip() in out and '--shared-until "## This project"' in out
     assert out.endswith("nothing to change, 1 step(s) left to do by hand\n")
     assert sync.main([str(root), "--shared-until", "## Their project"]) == 1
@@ -288,11 +290,14 @@ def test_all_copies_the_templates_a_project_lacks_and_keeps_the_ones_it_has(
 ):
     root = project(tmp_path, {".github/dependabot.yml": DEPENDABOT, "CLAUDE.md": None})
     assert sync.main([str(root)]) == 1  # nothing to rewrite, and it says so
-    assert "CLAUDE.md is missing. `--all` copies" in capsys.readouterr().out
+    assert "AGENTS.md is missing. `--all` copies" in capsys.readouterr().out
     assert sync.main([str(root), "--all"]) == 0
     out = capsys.readouterr().out
     for rel, source in (
+        ("AGENTS.md", "AGENTS.md"),
         ("CLAUDE.md", "CLAUDE.md"),
+        (".github/ISSUE_TEMPLATE/ticket.md", "ISSUE_TEMPLATE/ticket.md"),
+        (".github/ISSUE_TEMPLATE/config.yml", "ISSUE_TEMPLATE/config.yml"),
         (".github/pull_request_template.md", "pull_request_template.md"),
         (".pre-commit-config.yaml", "pre-commit-config.yaml"),
     ):
@@ -300,7 +305,7 @@ def test_all_copies_the_templates_a_project_lacks_and_keeps_the_ones_it_has(
         assert (root / rel).read_bytes() == (ROOT / "templates" / source).read_bytes()
     assert (root / ".github/dependabot.yml").read_text() == DEPENDABOT  # kept
     assert ".github/dependabot.yml: kept as it is" in out and "--overwrite" in out
-    assert out.endswith("sync_templates: 3 change(s) made\n")
+    assert out.endswith("sync_templates: 6 change(s) made\n")
     assert not (root / "rulesets").exists() and not (root / ".github/rulesets").exists()
     assert sync.main([str(root), "--all", "--overwrite"]) == 0
     template = (ROOT / "templates" / "dependabot.yml").read_text()

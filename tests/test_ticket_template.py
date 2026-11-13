@@ -258,8 +258,8 @@ def test_rehearsal_passes_the_flag_for_a_caller_that_turned_it_on():
 
 
 def test_how_work_arrives_points_at_the_template():
-    # The agent instructions are templates/CLAUDE.md today; whichever template
-    # carries "How work arrives" must name the ticket template.
+    # Whichever template carries "How work arrives" must name the ticket template
+    # (templates/AGENTS.md since the shared text moved there).
     sections = [
         text.split("## How work arrives")[1].split("\n## ")[0]
         for text in (p.read_text() for p in (ROOT / "templates").glob("*.md"))
