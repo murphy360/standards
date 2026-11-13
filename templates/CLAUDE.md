@@ -9,7 +9,8 @@ the shared parts as they are and add what is particular to this project under "T
 
 The owner hands out work as a ticket (or "the next ticket in the milestone"). The milestone's description carries the
 RUN ORDER: take the first open ticket in it that is not assigned to the owner and is not an epic. Read the whole
-ticket, including its "For the implementer" section. If a decision the owner reserved is unclear, ask in one comment
+ticket, including its "For the implementer" section; a ticket has the sections of `.github/ISSUE_TEMPLATE/ticket.md`.
+If a decision the owner reserved is unclear, ask in one comment
 on the ticket and take the next one; never guess. Say on the ticket, in one comment, that you started and which branch.
 
 ## Where and how to work

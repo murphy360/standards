@@ -1,5 +1,5 @@
 # Does the calling project follow the standards? Dependabot covers its ecosystems, every action is pinned to a
-# commit SHA, and CLAUDE.md exists (tools/check_standards.py). Three more checks exist but default off, so a project
+# commit SHA, and CLAUDE.md exists (tools/check_standards.py). Four more checks exist but default off, so a project
 # already pinned at @v2 sees no new failure until it turns one on:
 #   jobs:
 #     standards:
@@ -7,6 +7,7 @@
 #       with:
 #         check-pr-template: true        # also requires .github/pull_request_template.md
 #         check-pre-commit-config: true  # also requires .pre-commit-config.yaml
+#         check-ticket-template: true    # also requires an issue template in .github/ISSUE_TEMPLATE
 #         check-templates: true          # the shared text of CLAUDE.md is the template's; a job is named result
 name: standards-check
 on:
@@ -25,6 +26,10 @@ on:
         type: boolean
         default: false
         description: "also require .pre-commit-config.yaml (opt-in, added in v2.1.0)"
+      check-ticket-template:
+        type: boolean
+        default: false
+        description: "also require an issue template in .github/ISSUE_TEMPLATE, *.md or *.yml (opt-in)"
       check-templates:
         type: boolean
         default: false
@@ -74,6 +79,7 @@ jobs:
         env:
           CHECK_PR_TEMPLATE: ${{ inputs.check-pr-template }}
           CHECK_PRE_COMMIT_CONFIG: ${{ inputs.check-pre-commit-config }}
+          CHECK_TICKET_TEMPLATE: ${{ inputs.check-ticket-template }}
           CHECK_TEMPLATES: ${{ inputs.check-templates }}
         run: |
           args=()
@@ -82,6 +88,9 @@ jobs:
           fi
           if [ "$CHECK_PRE_COMMIT_CONFIG" = "true" ]; then
             args+=(--require-pre-commit)
+          fi
+          if [ "$CHECK_TICKET_TEMPLATE" = "true" ]; then
+            args+=(--require-ticket-template)
           fi
           if [ "$CHECK_TEMPLATES" = "true" ]; then
             args+=(--require-current-templates)
