@@ -34,6 +34,7 @@ jobs:
   #   with:
   #     format-check: true
   #     # mode: changed
+  #     # no-inline-config: true  # an eslint-disable comment hides nothing and is a problem
   shell:
     uses: murphy360/standards/.github/workflows/shell-lint.yml@v2
   workflows:
