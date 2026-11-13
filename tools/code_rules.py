@@ -26,6 +26,10 @@ its own ruff config):
   ruff is skipped when no Python file is tracked.
 * **Prettier** (``--prettier``): ``prettier --check`` in the same scope as the mode.
   Python stays with ruff.
+* **the config** (``code_rules_config.py``): a project's own config adds rules and
+  excludes files, and each Python file ruff does not check is printed. It cannot
+  switch a standard rule off: not with a per-file ignore and not, under
+  ``--no-inline-config``, with an ``eslint-disable`` comment.
 
 The rule: **every file is clean**, checked on every run with ``--all``. A breach in
 any file fails. There is no baseline and no flag that lets a finding pass. Each
@@ -67,20 +71,13 @@ import tokenize
 from collections import Counter
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # the module beside this one
+import code_rules_config as config
+
 SUFFIXES = (".py", ".js", ".ts", ".tsx", ".sh")
-COMPLEXITY = ("C901", "PLR0912", "PLR0915")
-STANDARD = [
-    "--extend-select",
-    "E,W,F," + ",".join(COMPLEXITY),
-    "--config",
-    "lint.mccabe.max-complexity=15",
-    "--config",
-    "lint.pylint.max-branches=15",
-    "--config",
-    "lint.pylint.max-statements=60",
-]
+COMPLEXITY, STANDARD = config.COMPLEXITY, config.STANDARD
 FUNC_RE = re.compile(r"`(\w+)`")
-JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
+JS_SUFFIXES = config.JS_SUFFIXES
 ESLINT_COMPLEXITY = ("complexity", "max-statements")
 ESLINT_RULES = [
     "--rule",
@@ -188,7 +185,9 @@ def ruff_cmd() -> list[str]:
     return [exe] if exe else [sys.executable, "-m", "ruff"]
 
 
-def ruff_findings(root: Path, keep: set[str] | None = None) -> list[dict]:
+def ruff_findings(
+    root: Path, keep: set[str] | None = None, rules: list[str] = STANDARD
+) -> list[dict]:
     """ruff's findings, each with its file, line, column, rule and message.
 
     Only the files in ``keep`` count when it is given: the tracked files in ``--paths``.
@@ -204,7 +203,7 @@ def ruff_findings(root: Path, keep: set[str] | None = None) -> list[dict]:
             "json",
             "--exit-zero",
             "--ignore-noqa",
-            *STANDARD,
+            *rules,
             ".",
         ],
         cwd=root,
@@ -244,11 +243,6 @@ def count_findings(found: list[dict]) -> Counter:
             key += f"::{m.group(1) if m else '?'}"
         counts[key] += 1
     return counts
-
-
-def ruff_counts(root: Path, keep: set[str] | None = None) -> Counter:
-    """ruff's findings as {"file::rule" or "file::rule::function": count}."""
-    return count_findings(ruff_findings(root, keep))
 
 
 def node_bin(root: Path, name: str) -> Path:
@@ -307,9 +301,9 @@ def eslint_count(found: list[dict]) -> Counter:
     return counts
 
 
-def eslint_findings(root: Path, keep: set[str] | None = None) -> list[dict]:
+def eslint_findings(root: Path, keep: set[str] | None = None, extra=()) -> list[dict]:
     res = subprocess.run(
-        [str(node_bin(root, "eslint")), "--format", "json", *ESLINT_RULES, "."],
+        [str(node_bin(root, "eslint")), "--format", "json", *ESLINT_RULES, *extra, "."],
         cwd=root,
         capture_output=True,
         text=True,
@@ -389,7 +383,7 @@ def explained(found: list[dict], files: set[str]) -> list[str]:
     )
     out = [
         f"  {f['rel']}:{f['line']}:{f['col']}: {f['code']} {f['message']}. "
-        f"Fix: {fix_for(f['code'], f.get('tool', 'ruff'))}"
+        f"Fix: {f.get('fix') or fix_for(f['code'], f.get('tool', 'ruff'))}"
         for f in shown[:MAX_EXPLAINED]
     ]
     if len(shown) > MAX_EXPLAINED:
@@ -554,6 +548,7 @@ def touched_problems(files: list[str], now: dict, root: Path) -> list[str]:
                 f"changed: {rel}: {lines} lines, over its limit "
                 f"{limit_for(rel, *now['limits'])}; split it in this pull request"
             )
+    out += [line for line in now["config"] if problem_file(line) in touched]
     return out + noqa_comments(sorted(touched & set(now["files"])), root)
 
 
@@ -571,7 +566,7 @@ def all_problems(now: dict, root: Path) -> list[str]:
     out += [
         f"all: {rel}: fails `prettier --check`" for rel in now.get("prettier") or ()
     ]
-    return out + noqa_comments(now["files"], root)
+    return out + now["config"] + noqa_comments(now["files"], root)
 
 
 def changed_problems(now: dict, root: Path) -> tuple[list[str], list[str]]:
@@ -687,8 +682,8 @@ def measure(root: Path, a: argparse.Namespace) -> dict:
     files = tracked_sources(root, paths)
     keep = {f for f in tracked_files(root) if in_paths(f, paths)}
     py = any(f.endswith(".py") for f in files)
-    found = ruff_findings(root, keep) if py else []
-    eslint = eslint_findings(root, keep) if a.eslint else []
+    found = config.unhidden(root, keep, ruff_findings, fix_for) if py else []
+    eslint = eslint_findings(root, keep, *config.eslint_extra(a)) if a.eslint else []
     return {
         "files": files,
         "found": found + eslint,
@@ -698,6 +693,8 @@ def measure(root: Path, a: argparse.Namespace) -> dict:
         "limits": (a.max_lines, a.max_test_lines),
         "unformatted": None if a.no_format or not py else unformatted(files, root),
         "prettier": prettier_unformatted(root, paths) if a.prettier else None,
+        "config": config.problems(root, keep, a),
+        "unchecked": config.unchecked(root, files, ruff_cmd()) if py else [],
     }
 
 
@@ -713,6 +710,8 @@ def summary(now: dict, problems: list[str]) -> str:
         left.append(f"{len(now['unformatted'])} file(s) not formatted")
     if now.get("prettier") is not None:
         left.append(f"{len(now['prettier'])} file(s) failing prettier")
+    if now["unchecked"]:
+        left.append(f"{len(now['unchecked'])} Python file(s) ruff does not check")
     return f"code_rules: {verdict} (left in the repository: {', '.join(left)})"
 
 
@@ -757,6 +756,7 @@ def parse_args(argv) -> argparse.Namespace:
         action="store_true",
         help="also run prettier --check, in the same scope as the mode",
     )
+    ap.add_argument("--no-inline-config", action="store_true", help=config.INLINE_HELP)
     a = ap.parse_args(argv)
     if a.all and a.format_only:
         ap.error("--all and --format-only are two different checks")
@@ -775,7 +775,7 @@ def main(argv=None) -> int:
     a = parse_args(argv)
     root = Path(a.root).resolve()
     now = measure(root, a)
-    notes = []
+    notes = config.notes(now)
     if (root / OLD_BASELINE).exists():
         notes.append(
             f"code_rules: note: {OLD_BASELINE} is no longer read (every file a pull "
