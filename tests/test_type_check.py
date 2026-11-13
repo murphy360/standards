@@ -33,7 +33,7 @@ MEMBER_FIX = (
 )
 TSC_OUTPUT = """\
 src/bad.ts(2,26): error TS2339: Property 'missing' does not exist on type 'string'.
-src/bad.ts(3,7): error TS2322: Type '(x: string) => string' is not assignable to type '(x: number) => string'.
+src/bad.ts(3,7): error TS2322: Type 'A' is not assignable to type 'B'.
   Types of parameters 'x' and 'x' are incompatible.
     Type 'number' is not assignable to type 'string'.
 error TS18003: No inputs were found in config file '/p/tsconfig.json'.
