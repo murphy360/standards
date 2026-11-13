@@ -1,5 +1,7 @@
 # Working on <project>
 
+<!-- standards:shared:begin (do not edit down to the end marker: tools/sync_templates.py rewrites this text) -->
+
 Instructions for any Claude session in this repository. Built from murphy360/standards (templates/CLAUDE.md); keep
 the shared parts as they are and add what is particular to this project under "This project".
 
@@ -7,7 +9,8 @@ the shared parts as they are and add what is particular to this project under "T
 
 The owner hands out work as a ticket (or "the next ticket in the milestone"). The milestone's description carries the
 RUN ORDER: take the first open ticket in it that is not assigned to the owner and is not an epic. Read the whole
-ticket, including its "For the implementer" section. If a decision the owner reserved is unclear, ask in one comment
+ticket, including its "For the implementer" section; a ticket has the sections of `.github/ISSUE_TEMPLATE/ticket.md`.
+If a decision the owner reserved is unclear, ask in one comment
 on the ticket and take the next one; never guess. Say on the ticket, in one comment, that you started and which branch.
 
 ## Where and how to work
@@ -67,6 +70,8 @@ on the ticket and take the next one; never guess. Say on the ticket, in one comm
 - Personal data is anything about a real person: a name, an address, an email, a phone number, a birth date,
   an account or record number, a location, a health, school or money record. It never goes in a fixture.
 - Prose in docs and tickets: short sentences, one idea per sentence, no em-dashes.
+
+<!-- standards:shared:end -->
 
 ## This project
 

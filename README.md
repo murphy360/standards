@@ -7,7 +7,7 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 
 | Path | What it is |
 |---|---|
-| `.github/workflows/standards-check.yml` | Fails a project that lacks a `.github/dependabot.yml` covering its ecosystems, pins an action to anything but a commit SHA, or has no `CLAUDE.md` |
+| `.github/workflows/standards-check.yml` | Fails a project that lacks a `.github/dependabot.yml` covering its ecosystems, pins an action to anything but a commit SHA, or has no `CLAUDE.md`; `check-templates: true` also fails one whose copy of the shared text of `CLAUDE.md` fell behind the template, or whose CI has no job named `result` |
 | `.github/workflows/python-lint.yml` | ruff with the project's config plus the standard complexity limits, no `# noqa`, and the file-size limit (`tools/code_rules.py`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `ruff format --check` in the same scope; `paths` limits it to some directories; `format-only: true` proves a pull request only re-formats |
 | `.github/workflows/node-lint.yml` | ESLint with the project's config plus the standard complexity limits, and the file-size limit (`tools/code_rules.py --eslint`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `prettier --check` in the same scope; `paths` limits it to some directories. Added in v2.2.0 |
 | `.github/workflows/shell-lint.yml` | shellcheck on every tracked `*.sh`, pinned |
@@ -16,15 +16,18 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `.github/workflows/test-docker.yml` | builds the project's image and runs its tests inside it |
 | `.github/workflows/image.yml` | multi-arch image (amd64 and arm64 on native runners) pushed to ghcr.io as one manifest list |
 | `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix; `--eslint` adds the project's ESLint and `--prettier` adds `prettier --check` |
-| `tools/check_standards.py` | the checks `standards-check` runs; two more (`--require-pr-template`, `--require-pre-commit`) are opt-in |
+| `tools/check_standards.py` | the checks `standards-check` runs; four more (`--require-pr-template`, `--require-pre-commit`, `--require-ticket-template`, `--require-current-templates`) are opt-in |
+| `tools/sync_templates.py` | brings a project's copy of the templates up to date: rewrites the shared text of its `CLAUDE.md` from the template and touches nothing else; `--check` changes nothing and exits 1 if something would change; `--all` also copies the templates the project lacks ("Staying current", below) |
 | `tools/agent_app.py` | gives each agent its own GitHub identity (a GitHub App): the link that creates it, a one-hour token, the commit author lines |
 | `tools/repo-settings.sh` | applies a repository's settings and its branch ruleset (below), and turns on GitHub's secret scanning and push protection where GitHub offers them; `--dry-run` prints what it would send |
 | `tools/fleet.py` | the fleet report: one row per repository, with the version of the standard it follows and what it lacks; `--run-tools <ref>` is the rehearsal before a release ("The fleet report", below) |
 | `templates/ci.yml` | a project's CI calling the workflows: one run per ref, a fixed-name `result` job to require |
 | `templates/eslint.config.mjs` | the ESLint config a TypeScript project starts from |
 | `templates/dependabot.yml` | Dependabot for actions, pip, docker and npm, weekly and grouped |
-| `templates/CLAUDE.md` | how an agent session works in a project: worktrees, Docker tests, the definition of done |
+| `templates/CLAUDE.md` | how an agent session works in a project: worktrees, Docker tests, the definition of done; the shared text sits between two marker comments, so a tool can compare and rewrite it |
 | `templates/pull_request_template.md` | the pull request body from "Definition of done" |
+| `templates/ISSUE_TEMPLATE/ticket.md` | the ticket, an implementer's whole brief: the problem or the owner's direction, what to build, the acceptance checklist, "For the implementer", what is out of scope, the decisions the owner reserves |
+| `templates/ISSUE_TEMPLATE/config.yml` | keeps the blank issue beside the ticket template, for a quick note |
 | `templates/pre-commit-config.yaml` | ruff, ruff format, shellcheck, actionlint and gitleaks, pinned, so a finding is caught before the push and a secret before the commit |
 | `templates/rulesets/main.json` | the branch ruleset `tools/repo-settings.sh` applies: pull request required, linear history, no force push, the `result` job required; the owner can merge a pull request past a failed check, and nobody can push to main directly |
 | `templates/rulesets/version-tags.json` | the tag ruleset `tools/repo-settings.sh` applies: only the owner can create, move or delete a `v*` tag |
@@ -84,6 +87,11 @@ not name the commit.
   Turn on Dependabot alerts and security updates in each repository's settings (`tools/repo-settings.sh` does this).
 - **Agents work the same way everywhere.** `CLAUDE.md` from the template: draft until green, ready once, no
   `git stash` across worktrees, never reset onto a moved base.
+- **Work arrives as a ticket, in the milestone's RUN ORDER.** The ticket is the implementer's whole brief, so
+  every ticket has the sections of `templates/ISSUE_TEMPLATE/ticket.md`. A milestone's description carries a
+  numbered RUN ORDER of its tickets. A ticket assigned to the owner is the owner's. An agent takes the first open
+  ticket in the order that is not. Where a decision the owner reserved is unclear, the agent asks in one comment
+  and takes the next ticket. It never guesses.
 - **Parallel agent work does not queue or collide.** `templates/ci.yml` runs one pipeline per ref: a pull request's
   superseded run is cancelled, so a second push never waits behind the first, and a push to main always finishes.
   Every job carries a `timeout-minutes` (a job calling a reusable workflow cannot set its own, so the reusable
@@ -119,7 +127,8 @@ murphy360/template-python`, which already holds the steps below. An existing pro
 1. Copy `templates/ci.yml` to `.github/workflows/ci.yml` and keep the jobs that apply. That is all the code rules
    need: the lint job fetches the base it compares with.
 2. Copy `templates/dependabot.yml` to `.github/dependabot.yml`; `standards-check` names any ecosystem left out.
-3. Copy `templates/CLAUDE.md` to `CLAUDE.md` and fill in "This project".
+3. Copy `templates/CLAUDE.md` to `CLAUDE.md` and fill in "This project". Keep the two marker comments: the text
+   between them is the standard's ("Staying current", below).
 4. Copy `templates/pull_request_template.md` to `.github/pull_request_template.md`.
 5. Copy `templates/pre-commit-config.yaml` to `.pre-commit-config.yaml`; `pip install pre-commit && pre-commit
    install` once per checkout. Turn the matching checks on in `standards-check`'s `with:` once both templates are
@@ -135,6 +144,9 @@ murphy360/template-python`, which already holds the steps below. An existing pro
     on, Dependabot security updates on, secret scanning and push protection on where GitHub offers them, and the
     branch and tag rulesets (`templates/rulesets/main.json`,
     `templates/rulesets/version-tags.json`) applied to the repository.
+11. Copy `templates/ISSUE_TEMPLATE/` to `.github/ISSUE_TEMPLATE/` (`ticket.md` and `config.yml`), then set
+    `check-ticket-template: true` on `standards-check`. Give each milestone a RUN ORDER ("Tickets and milestones",
+    below).
 
 A JavaScript or TypeScript project calls `node-lint` instead of `python-lint`, or as a job of its own. Copy
 `templates/eslint.config.mjs` to `eslint.config.mjs`. Add `eslint`, `@eslint/js`, `typescript-eslint` and `prettier`
@@ -144,6 +156,62 @@ apply, and `format-check: true` runs `prettier --check` on the same files. See w
 
 A project that still has a `code_rules_baseline.json` from `v1.0.0` can delete it: the tool no longer reads it, and
 says so in a note.
+
+### Staying current
+
+A copy falls behind when its template changes. The shared text of `CLAUDE.md` is everything between two marker
+comments, `<!-- standards:shared:begin -->` and `<!-- standards:shared:end -->`, which a rendered page does not show.
+The title and "This project" are outside them. Two things keep a project's copy current:
+
+- **The sync tool.** `python3 <standards>/tools/sync_templates.py <checkout>` rewrites the text between the markers
+  from the template and touches nothing outside them. It prints what it changed. `--check` changes nothing and
+  exits 1 if something would change. `--all` also copies the pull request template, the pre-commit config and
+  `dependabot.yml` when the project lacks them; an existing file is kept unless `--overwrite` is given. The
+  rulesets are not copied: `tools/repo-settings.sh` applies them. `<standards>` is a checkout at the version the
+  project's CI calls: `git clone --depth 1 --branch v2 https://github.com/murphy360/standards /tmp/standards`.
+- **The check.** `check-templates: true` in `standards-check`'s `with:` fails a pull request while the shared text
+  differs from the template of the version the workflow is called at. It names the file, shows the first lines
+  that differ and prints the command above. Trailing whitespace and line endings do not count. The same input
+  requires a CI job named `result`. It defaults off.
+
+A `CLAUDE.md` copied before the markers existed has none. Run the tool once with
+`--shared-until "## This project"`: everything under the title down to that heading is replaced by the shared text,
+between markers, so move anything of the project's own under the heading first. Without that flag the tool changes
+nothing in such a file and says what to do: it never guesses where a project's own text starts.
+
+Run the tool whenever the project moves to a new version of the standard. A project at `@v2` moves when the `v2`
+tag does. With `check-templates` on, the first pull request after a release that changed the shared text fails
+until the tool has run. The rehearsal (`tools/fleet.py --run-tools <ref>`) names those projects before the tag moves.
+
+### Tickets and milestones
+
+GitHub reads issue templates from `.github/ISSUE_TEMPLATE` on the default branch (its documentation, read
+2026-11-13). A Markdown template needs `name` and `about` in its front matter. The standard's template sets
+nothing else: no label and no assignee, because a project may not have them. Once the copy is merged, a new issue
+offers "Ticket" and a blank issue. The blank one stays for the owner's quick notes (`config.yml`).
+
+The ticket keeps every section, with "none" where one has nothing to say. "Acceptance" is the checklist someone
+else verifies. "Done", under "For the implementer", says where the work stops: what the one pull request holds,
+and what is left to the owner. "Owner decision" lists what the owner reserves. With "none" there, nothing is
+reserved.
+
+GitHub has no template for a milestone, so the description is written by hand in this shape:
+
+```text
+<one or two sentences: what this milestone is for, and where it came from>
+
+RUN ORDER
+
+1. #<number> <title>
+2. #<number> <title>
+3. #<number> <title>
+
+Tickets assigned to the owner are the owner's. An agent takes the first open ticket that is not.
+```
+
+An agent takes its work from the order, so a ticket that is not in it is not taken: a new ticket gets its line
+when it is filed. `gh` has no milestone command, so the description is set through the API:
+`gh api -X PATCH repos/<owner>/<repo>/milestones/<number> -F description=@milestone.txt`.
 
 ### The rulesets' bypass actor
 
@@ -218,7 +286,7 @@ The report is printed and never written to a file. This repository is public and
 report names are private: do not commit its output, and do not paste it in a pull request or a ticket. Counts are
 fine.
 
-`--run-tools <ref>` is the rehearsal. It takes `tools/` of this checkout at `<ref>` (a tag, a branch or a commit),
+`--run-tools <ref>` is the rehearsal. It takes `tools/` and `templates/` of this checkout at `<ref>` (a tag, a branch or a commit),
 clones each adopter into a temporary directory, and runs the tools the way the adopter's workflows would:
 `code_rules.py --all` for a caller of `python-lint`, with its `format-check`, `paths` and `working-directory`, and
 `check_standards.py` for a caller of `standards-check`, with the checks it turned on. It prints pass or FAIL for
