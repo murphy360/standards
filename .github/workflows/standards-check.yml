@@ -1,5 +1,5 @@
 # Does the calling project follow the standards? Dependabot covers its ecosystems, every action is pinned to a
-# commit SHA, and CLAUDE.md exists (tools/check_standards.py). Four more checks exist but default off, so a project
+# commit SHA, and CLAUDE.md exists (tools/check_standards.py). Five more checks exist but default off, so a project
 # already pinned at @v2 sees no new failure until it turns one on:
 #   jobs:
 #     standards:
@@ -9,6 +9,7 @@
 #         check-pre-commit-config: true  # also requires .pre-commit-config.yaml
 #         check-ticket-template: true    # also requires an issue template in .github/ISSUE_TEMPLATE
 #         check-templates: true          # the shared text of CLAUDE.md is the template's; a job is named result
+#         check-agent-settings: true     # also requires .claude/settings.json with the guard hook, and its guard
 name: standards-check
 on:
   workflow_call:
@@ -34,6 +35,10 @@ on:
         type: boolean
         default: false
         description: "also require the shared text of CLAUDE.md or AGENTS.md to be the template's, and a CI job named result (opt-in)"
+      check-agent-settings:
+        type: boolean
+        default: false
+        description: "also require .claude/settings.json with the guard hook, and the guard file it names (opt-in)"
 permissions:
   contents: read
 jobs:
@@ -81,6 +86,7 @@ jobs:
           CHECK_PRE_COMMIT_CONFIG: ${{ inputs.check-pre-commit-config }}
           CHECK_TICKET_TEMPLATE: ${{ inputs.check-ticket-template }}
           CHECK_TEMPLATES: ${{ inputs.check-templates }}
+          CHECK_AGENT_SETTINGS: ${{ inputs.check-agent-settings }}
         run: |
           args=()
           if [ "$CHECK_PR_TEMPLATE" = "true" ]; then
@@ -94,5 +100,8 @@ jobs:
           fi
           if [ "$CHECK_TEMPLATES" = "true" ]; then
             args+=(--require-current-templates)
+          fi
+          if [ "$CHECK_AGENT_SETTINGS" = "true" ]; then
+            args+=(--require-agent-settings)
           fi
           python3 "$RUNNER_TEMP/standards/tools/check_standards.py" "${args[@]}"
