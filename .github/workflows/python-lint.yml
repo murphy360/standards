@@ -9,6 +9,7 @@
 #         format-check: true
 #         # mode: changed     # a project still paying down its debt: every file a change touches must be clean
 #         # paths: src tools  # only these directories (default: every tracked file)
+#         # silencers: true   # every skip, xfail, type ignore and the like carries its reason; the default in v3
 #         # format-only: ${{ contains(github.event.pull_request.labels.*.name, 'format-only') }}
 #
 # The base. A pull request is compared with the first parent of the merge commit the job checks out: the base branch
@@ -22,6 +23,11 @@
 # rule off: a standard finding under per-file-ignores or lint.exclude is reported like any other, and an
 # extend-per-file-ignores entry that names a standard rule is a problem. Every tracked Python file ruff does not
 # check is printed by name on every run, and the last line counts them. That is information, not a failure.
+#
+# silencers. With silencers: true, each way to turn a check off in a file carries its reason: a pytest skip or xfail
+# its reason=, a type ignore its error code and a comment, a pragma: no cover and a shellcheck disable a comment on
+# the line above. The last line counts the silencers left. It needs no base: mode all checks every file, mode
+# changed the files a change touches. Off by default in v2.
 name: python-lint
 on:
   workflow_call:
@@ -33,6 +39,7 @@ on:
       mode: {type: string, default: "all", description: "all: every file must be clean; changed: every file the change touches"}
       paths: {type: string, default: "", description: "space-separated directories or files to check (default: every tracked file)"}
       format-only: {type: boolean, default: false, description: "also prove that this pull request only re-formats Python files"}
+      silencers: {type: boolean, default: false, description: "a skip, an xfail, a type ignore, a pragma: no cover and a shellcheck disable each need a reason, .only fails, and the last line counts them"}
       working-directory: {type: string, default: "."}
       standards-ref:
         type: string
@@ -88,6 +95,7 @@ jobs:
           MODE: ${{ inputs.mode }}
           FORMAT_CHECK: ${{ inputs.format-check }}
           FORMAT_ONLY: ${{ inputs.format-only }}
+          SILENCERS: ${{ inputs.silencers }}
           PATHS: ${{ inputs.paths }}
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
@@ -96,6 +104,7 @@ jobs:
           tool="$RUNNER_TEMP/standards/tools/code_rules.py"
           args=()
           [ "$FORMAT_CHECK" = true ] || args+=(--no-format)
+          [ "$SILENCERS" != true ] || args+=(--silencers)
           read -r -a paths <<< "$PATHS"
           [ ${#paths[@]} -eq 0 ] || args+=(--paths "${paths[@]}")
           case "$MODE" in

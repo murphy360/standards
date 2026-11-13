@@ -82,6 +82,7 @@ jobs:
       - name: One manifest list for both architectures
         working-directory: /tmp/digests
         run: |
+          # Word splitting is wanted here: each `-t tag` pair and each digest is an argument of its own.
           # shellcheck disable=SC2046
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf 'ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@sha256:%s ' *)
