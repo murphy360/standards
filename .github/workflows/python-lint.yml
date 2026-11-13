@@ -29,7 +29,10 @@ on:
       paths: {type: string, default: "", description: "space-separated directories or files to check (default: every tracked file)"}
       format-only: {type: boolean, default: false, description: "also prove that this pull request only re-formats Python files"}
       working-directory: {type: string, default: "."}
-      standards-ref: {type: string, default: "v2", description: "the tag the project pins (the tools come from it)"}
+      standards-ref:
+        type: string
+        default: ""
+        description: "deprecated: the tools come from the commit this workflow is called at; read only if GitHub does not name it"
 permissions:
   contents: read
 jobs:
@@ -44,12 +47,33 @@ jobs:
         if: runner.environment == 'self-hosted'
         run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - name: The standards' tools, at the version the project pins
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: murphy360/standards
-          ref: ${{ inputs.standards-ref }}
-          path: .standards
+      # The tools come from the commit this workflow file was called at, so a workflow and its tools never disagree.
+      # job.workflow_sha is that commit: what @v2 or @<sha> resolved to in a project, and the commit under test in
+      # this repository's own ci.yml. It is read through toJSON because actionlint 1.7.12 does not know the property
+      # yet. The checkout goes to the runner's temp directory, so nothing is added to the project's workspace.
+      - name: The standards' tools, from the commit this workflow was called at
+        working-directory: ${{ runner.temp }}
+        env:
+          WORKFLOW_REPOSITORY: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          WORKFLOW_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
+          WORKFLOW_REF: ${{ fromJSON(toJSON(job)).workflow_ref }}
+          STANDARDS_REF: ${{ inputs.standards-ref }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          repository="${WORKFLOW_REPOSITORY:-murphy360/standards}"
+          ref="$WORKFLOW_SHA"
+          if [ -z "$ref" ] && [ -n "$STANDARDS_REF" ]; then
+            ref="$STANDARDS_REF"
+            echo "::warning::GitHub did not name this workflow's commit (job.workflow_sha is empty): the tools come from standards-ref, $ref"
+          elif [ -z "$ref" ]; then
+            echo "::error::GitHub did not name this workflow's commit (job.workflow_sha is empty). Pass standards-ref: the ref this workflow is called at."
+            exit 1
+          fi
+          rm -rf standards
+          git init -q standards
+          git -C standards fetch -q --no-tags --depth=1 "$SERVER_URL/$repository" "$ref"
+          git -C standards checkout -q --detach FETCH_HEAD
+          echo "standards tools: $repository@$(git -C standards rev-parse HEAD) (${WORKFLOW_REF:-standards-ref $ref})"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: ${{ inputs.python-version }}
@@ -64,7 +88,7 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           BEFORE: ${{ github.event.before }}
         run: |
-          tool="$GITHUB_WORKSPACE/.standards/tools/code_rules.py"
+          tool="$RUNNER_TEMP/standards/tools/code_rules.py"
           args=()
           [ "$FORMAT_CHECK" = true ] || args+=(--no-format)
           read -r -a paths <<< "$PATHS"
