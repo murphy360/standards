@@ -19,6 +19,7 @@ jobs:
     # with:
     #   check-pr-template: true        # also requires .github/pull_request_template.md
     #   check-pre-commit-config: true  # also requires .pre-commit-config.yaml
+    #   check-templates: true          # the shared text of CLAUDE.md is the template's (tools/sync_templates.py)
   lint:
     uses: murphy360/standards/.github/workflows/python-lint.yml@v2
     with:

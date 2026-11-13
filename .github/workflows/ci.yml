@@ -35,6 +35,8 @@ jobs:
     with:
       check-pr-template: true
       check-pre-commit-config: true
+      # check-templates stays off: this repository's CLAUDE.md is its own text, not a copy of templates/CLAUDE.md.
+      # tests/test_templates.py runs this workflow's step with it on, against a project made from the templates.
   secret-scan:
     uses: ./.github/workflows/secret-scan.yml
   secret-scan-history:
