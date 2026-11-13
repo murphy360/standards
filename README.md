@@ -19,7 +19,7 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix; `--eslint` adds the project's ESLint and `--prettier` adds `prettier --check`. CI runs it, and a project runs it as a pre-commit hook |
 | `tools/type_check.py` | the type check `type-check` runs: pyright, or the project's `tsc --noEmit` with `--language typescript`; it reads the checker's output and prints each finding the way `code_rules.py` does |
 | `.pre-commit-hooks.yaml` | the code rules as pre-commit hooks: `code-rules` is what `python-lint` runs and `code-rules-node` is what `node-lint` runs. pre-commit installs this repository (`pyproject.toml`: the modules under `tools/` and the pinned ruff) into the hook's own environment, so a project installs nothing |
-| `tools/check_standards.py` | the checks `standards-check` runs; four more (`--require-pr-template`, `--require-pre-commit`, `--require-ticket-template`, `--require-current-templates`) are opt-in |
+| `tools/check_standards.py` | the checks `standards-check` runs; five more (`--require-pr-template`, `--require-pre-commit`, `--require-ticket-template`, `--require-current-templates`, `--require-agent-settings`) are opt-in |
 | `tools/sync_templates.py` | brings a project's copy of the templates up to date: rewrites the shared text of its `CLAUDE.md` from the template and touches nothing else; `--check` changes nothing and exits 1 if something would change; `--all` also copies the templates the project lacks ("Staying current", below) |
 | `tools/agent_app.py` | gives each agent its own GitHub identity (a GitHub App): the link that creates it, a one-hour token, the commit author lines |
 | `tools/repo-settings.sh` | applies a repository's settings and its branch ruleset (below), and turns on GitHub's secret scanning and push protection where GitHub offers them; `--dry-run` prints what it would send |
@@ -32,6 +32,8 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `templates/ISSUE_TEMPLATE/ticket.md` | the ticket, an implementer's whole brief: the problem or the owner's direction, what to build, the acceptance checklist, "For the implementer", what is out of scope, the decisions the owner reserves |
 | `templates/ISSUE_TEMPLATE/config.yml` | keeps the blank issue beside the ticket template, for a quick note |
 | `templates/pre-commit-config.yaml` | the code rules (the `code-rules` hook), ruff, ruff format, shellcheck, actionlint and gitleaks, each pinned at the version CI uses, so a finding is caught before the push and a secret before the commit |
+| `templates/claude/settings.json` | what a Claude Code session refuses, copied to `.claude/settings.json`: deny rules for the simple forms of the never-rules, and a `PreToolUse` hook that runs the guard before every shell command. Nothing else: no model, no allow list |
+| `templates/claude/guard.py` | the guard, copied to `.claude/guard.py`: it refuses `git stash`, a push to the default branch, a reset onto another commit, an admin merge, `--no-verify` and a forced push, says what to do instead, and runs `pre-commit run --all-files` before a push |
 | `templates/rulesets/main.json` | the branch ruleset `tools/repo-settings.sh` applies: pull request required, linear history, no force push, the `result` job required; the owner can merge a pull request past a failed check, and nobody can push to main directly |
 | `templates/rulesets/version-tags.json` | the tag ruleset `tools/repo-settings.sh` applies: only the owner can create, move or delete a `v*` tag |
 | `tests/fixtures/` | the three small projects (Node, Python, Docker) this repository's own CI runs `node-lint`, `type-check`, `test-docker` and `image` on, so every workflow runs here before a tag moves |
@@ -102,6 +104,25 @@ not name the commit.
   numbered RUN ORDER of its tickets. A ticket assigned to the owner is the owner's. An agent takes the first open
   ticket in the order that is not. Where a decision the owner reserved is unclear, the agent asks in one comment
   and takes the next ticket. It never guesses.
+- **The never-rules are refused, not only written.** A long session may no longer have `CLAUDE.md` in view, so
+  `templates/claude/settings.json` and `templates/claude/guard.py`, copied to `.claude/`, make Claude Code refuse
+  the command before it runs: `git stash` in a form that saves (listing or showing a stash is fine), a push to the
+  default branch, `git reset --hard` or `--soft` onto another commit, `gh pr merge --admin`, `--no-verify` on a
+  commit or a push, and a forced push. A refusal names the rule and says what to do instead. The guard reads the
+  command the way a shell does: it finds it after `cd x &&`, after `;`, in a subshell, in `$(...)`, after
+  `git -C dir` and in `bash -c '...'`, and it lets through a command that only says the words (an `echo`, a `grep`,
+  a commit message). Before a push it lets through, it runs `pre-commit run --all-files` when the project has a
+  `.pre-commit-config.yaml`, and refuses the push with the end of the output when that fails. The run has a time
+  limit of 300 seconds (`GUARD_PRE_COMMIT_TIMEOUT` sets another); past it the push is refused, and the session
+  runs the command itself once, which installs the hooks. Where `pre-commit` is not installed the push goes
+  through with a one-line note, and CI is the backstop. The deny rules in the settings file cover the simple forms
+  on their own, should the guard not start (no `python3`), but they give no reason.
+- **The guard is a guard rail, not a sandbox.** It cannot see a script or a Makefile target that runs the command,
+  a here-document fed to a shell, a git alias, a command built from a variable, or a tool other than the shell (an
+  API call that merges). Claude
+  Code reads `.claude/settings.json` from the folder a session starts in: a session started above the project,
+  which only changes into it, is not guarded, and neither is another agent tool. When the guard cannot read a call
+  it lets the call through and says so. The branch ruleset is the real stop.
 - **Parallel agent work does not queue or collide.** `templates/ci.yml` runs one pipeline per ref: a pull request's
   superseded run is cancelled, so a second push never waits behind the first, and a push to main always finishes.
   Every job carries a `timeout-minutes` (a job calling a reusable workflow cannot set its own, so the reusable
@@ -170,6 +191,11 @@ murphy360/template-python`, which already holds the steps below. An existing pro
 11. Copy `templates/ISSUE_TEMPLATE/` to `.github/ISSUE_TEMPLATE/` (`ticket.md` and `config.yml`), then set
     `check-ticket-template: true` on `standards-check`. Give each milestone a RUN ORDER ("Tickets and milestones",
     below).
+12. Copy `templates/claude/settings.json` to `.claude/settings.json` and `templates/claude/guard.py` to
+    `.claude/guard.py`, and commit both: a Claude Code session started in the project then refuses the never-rules
+    ("The rules", above). The guard needs `python3`. A project that already has a `.claude/settings.json` adds the
+    `deny` rules and the `PreToolUse` hook to its own. Then turn on `check-agent-settings: true` in
+    `standards-check`'s `with:`: it requires the settings file, its guard hook, and the guard file the hook names.
 
 A JavaScript or TypeScript project calls `node-lint` instead of `python-lint`, or as a job of its own. Copy
 `templates/eslint.config.mjs` to `eslint.config.mjs`. Add `eslint`, `@eslint/js`, `typescript-eslint` and `prettier`
@@ -249,6 +275,20 @@ Tickets assigned to the owner are the owner's. An agent takes the first open tic
 An agent takes its work from the order, so a ticket that is not in it is not taken: a new ticket gets its line
 when it is filed. `gh` has no milestone command, so the description is set through the API:
 `gh api -X PATCH repos/<owner>/<repo>/milestones/<number> -F description=@milestone.txt`.
+### The refusals in another agent tool
+
+The settings file is Claude Code's, read from the project a session starts in. The same hook in a settings source
+of the session itself guards every clone that session works in (verified by passing the hook with `--settings`;
+the user file `~/.claude/settings.json` takes the same keys, and is the owner's to change). For every tool,
+GitHub refuses a push and a forced push to main where the ruleset is applied, and an agent identity holds no
+bypass (`templates/rulesets/main.json`, "Agent identities", below); nothing on GitHub's side stops `git stash`, a
+reset or `--no-verify`. Codex, Gemini CLI, Cursor and GitHub Copilot each document a hook that runs before a shell
+command and can refuse it: Codex `PreToolUse` in `hooks.json` (exit code 2, the reason on stderr), Gemini CLI
+`BeforeTool` in its `settings.json` (the shell tool is `run_shell_command`; exit code 2), Cursor
+`beforeShellExecution` in `.cursor/hooks.json` (exit code 2, or `"permission": "deny"`), Copilot `preToolUse` in
+`.github/hooks/*.json` (`"permissionDecision": "deny"`). Read in each tool's documentation on 2026-11-13. Not
+verified: none of them was run with `guard.py`, and each sends its own input, so the guard may need a small
+adapter there.
 
 ### The rulesets' bypass actor
 

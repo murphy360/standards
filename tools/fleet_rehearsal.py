@@ -45,6 +45,7 @@ CHECK_FLAGS = (
     ("check-pre-commit-config", "--require-pre-commit"),
     ("check-ticket-template", "--require-ticket-template"),
     ("check-templates", "--require-current-templates"),
+    ("check-agent-settings", "--require-agent-settings"),
 )
 WORST = ("error", "FAIL", "debt", "pass", "-")
 
