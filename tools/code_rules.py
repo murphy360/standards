@@ -191,8 +191,8 @@ def ruff_cmd() -> list[str]:
 def ruff_findings(root: Path, keep: set[str] | None = None) -> list[dict]:
     """ruff's findings, each with its file, line, column, rule and message.
 
-    Only the files in ``keep`` count when it is given: the tracked files, so that a
-    checkout of the standards' tools beside the project is not counted as the project.
+    Only the files in ``keep`` count when it is given: the tracked files in ``--paths``.
+    An untracked file is never the project (an older workflow left the tools there).
     ruff runs with ``--ignore-noqa``: a ``# noqa`` hides nothing.
     """
     res = subprocess.run(

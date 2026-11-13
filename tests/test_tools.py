@@ -254,7 +254,7 @@ def test_a_project_in_a_subdirectory_sees_its_own_paths(tmp_path, capsys):
 
 @needs_ruff
 def test_an_untracked_checkout_beside_the_project_is_not_counted(tmp_path, capsys):
-    """CI checks the standards out into .standards/, untracked, in the project."""
+    """A workflow pinned before the tools left the workspace still puts them there."""
     root = repo(tmp_path, {"pkg/clean.py": 'message = "ok"\n'})
     commit_base(root)
     write(root, {".standards/tools/dirty.py": LONG})
@@ -682,14 +682,14 @@ def shallow_checkout(tmp_path, origin: Path, commit_sha: str) -> Path:
 def run_lint_step(
     tmp_path, ci: Path, pr_base: str, mode: str = "changed", event: str = "pull_request"
 ):
-    workspace = tmp_path / "workspace"
-    (workspace / ".standards").mkdir(parents=True)
-    (workspace / ".standards" / "tools").symlink_to(TOOLS)
+    runner_temp = tmp_path / "runner-temp"
+    (runner_temp / "standards").mkdir(parents=True)
+    (runner_temp / "standards" / "tools").symlink_to(TOOLS)
     env = {
         "PATH": os.environ["PATH"],
         "HOME": str(tmp_path),
         "CI": "true",
-        "GITHUB_WORKSPACE": str(workspace),
+        "RUNNER_TEMP": str(runner_temp),
         "MODE": mode,
         "FORMAT_CHECK": "true",
         "EVENT": event,
