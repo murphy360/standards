@@ -17,6 +17,10 @@ its own ruff config):
 * **no noqa**: ruff runs with ``--ignore-noqa``, so a ``# noqa`` hides nothing, and a
   ``# noqa`` or ``# ruff: noqa`` comment in a Python file is a problem of its own.
   Comments are read with the tokenizer: the words in a string or a docstring pass.
+* **silencers** (``--silencers``, ``code_rules_silencers.py``): a pytest skip or
+  xfail, a type ignore, a ``# pragma: no cover``, a ``# shellcheck disable=`` and a
+  ``.skip`` in a JavaScript test each carry a reason, ``.only`` is a problem, and
+  the last line counts the silencers left.
 * **format**: a Python file passes ``ruff format --check`` (``--no-format`` leaves
   this out, for a project that has not re-formatted yet).
 * **size**: a tracked source file (.py .js .ts .tsx .sh) is at most 800 lines, a test
@@ -67,12 +71,12 @@ import re
 import shutil
 import subprocess
 import sys
-import tokenize
 from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # the module beside this one
 import code_rules_config as config
+import code_rules_silencers as silencers
 
 SUFFIXES = (".py", ".js", ".ts", ".tsx", ".sh")
 COMPLEXITY, STANDARD = config.COMPLEXITY, config.STANDARD
@@ -88,7 +92,6 @@ ESLINT_RULES = [
 ESLINT_FUNC_RE = re.compile(r"'([^']+)'")
 # No .svg: prettier has no SVG parser, so an icon would stop the whole run.
 PRETTIER_SUFFIXES = JS_SUFFIXES + tuple(".json .md .yml .yaml .css .html".split())
-NOQA_RE = re.compile(r"#\s*(ruff\s*:\s*)?noqa\b", re.IGNORECASE)
 MAX_EXPLAINED = 50
 FIXES = {
     "E501": "wrap the line to the project's line length (`ruff format` does not wrap "
@@ -104,6 +107,7 @@ PARSE_RE = re.compile(r"Failed to parse (.+?):\d+:\d+:")
 BASE_ENV = "CODE_RULES_BASE"
 DEFAULT_BASE = "origin/main"
 OLD_BASELINE = "code_rules_baseline.json"
+noqa_comments = silencers.noqa_comments  # the first silencer: not allowed at all
 
 
 def is_test(rel: str) -> bool:
@@ -391,31 +395,6 @@ def explained(found: list[dict], files: set[str]) -> list[str]:
     return out
 
 
-def noqa_comments(files: list[str], root: Path) -> list[str]:
-    """Every ``# noqa`` or ``# ruff: noqa`` comment in the Python files.
-
-    Comments are read with the tokenizer, so the words in a string or a docstring
-    are not comments. A file that does not tokenize is left to ruff, which reports it.
-    """
-    out = []
-    for rel in files:
-        path = root / rel
-        if not rel.endswith(".py") or not path.is_file():
-            continue
-        try:
-            with path.open("rb") as fh:
-                tokens = list(tokenize.tokenize(fh.readline))
-        except (tokenize.TokenError, SyntaxError):
-            continue
-        for tok in tokens:
-            if tok.type == tokenize.COMMENT and NOQA_RE.search(tok.string):
-                out.append(
-                    f"noqa: {rel}:{tok.start[0]}: a `# noqa` is not allowed; remove "
-                    "it and fix the finding it hid"
-                )
-    return out
-
-
 def unformatted(files: list[str], root: Path) -> list[str]:
     """The Python files among ``files`` that fail ``ruff format --check``.
 
@@ -684,6 +663,7 @@ def measure(root: Path, a: argparse.Namespace) -> dict:
     py = any(f.endswith(".py") for f in files)
     found = config.unhidden(root, keep, ruff_findings, fix_for) if py else []
     eslint = eslint_findings(root, keep, *config.eslint_extra(a)) if a.eslint else []
+    unreasoned, silencer_count = silencers.measure(root, keep, a)
     return {
         "files": files,
         "found": found + eslint,
@@ -693,7 +673,8 @@ def measure(root: Path, a: argparse.Namespace) -> dict:
         "limits": (a.max_lines, a.max_test_lines),
         "unformatted": None if a.no_format or not py else unformatted(files, root),
         "prettier": prettier_unformatted(root, paths) if a.prettier else None,
-        "config": config.problems(root, keep, a),
+        "config": config.problems(root, keep, a) + unreasoned,
+        "silencers": silencer_count,
         "unchecked": config.unchecked(root, files, ruff_cmd()) if py else [],
     }
 
@@ -712,6 +693,7 @@ def summary(now: dict, problems: list[str]) -> str:
         left.append(f"{len(now['prettier'])} file(s) failing prettier")
     if now["unchecked"]:
         left.append(f"{len(now['unchecked'])} Python file(s) ruff does not check")
+    left += silencers.left(now)
     return f"code_rules: {verdict} (left in the repository: {', '.join(left)})"
 
 
@@ -757,6 +739,7 @@ def parse_args(argv) -> argparse.Namespace:
         help="also run prettier --check, in the same scope as the mode",
     )
     ap.add_argument("--no-inline-config", action="store_true", help=config.INLINE_HELP)
+    ap.add_argument("--silencers", action="store_true", help=silencers.HELP)
     a = ap.parse_args(argv)
     if a.all and a.format_only:
         ap.error("--all and --format-only are two different checks")

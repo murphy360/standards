@@ -15,6 +15,7 @@
 #         # mode: changed     # a project still paying down its debt: every file a change touches must be clean
 #         # paths: src        # only these directories (default: every tracked file)
 #         # no-inline-config: true  # an eslint-disable comment hides nothing and is a problem; the default in v3
+#         # silencers: true         # a .skip in a test carries its reason and .only is a problem; the default in v3
 #
 # The base. A pull request is compared with the first parent of the merge commit the job checks out: the base branch
 # as the pull request was merged with it (the pull request's base SHA when HEAD is not a merge commit). A push is
@@ -30,6 +31,7 @@ on:
       mode: {type: string, default: "all", description: "all: every file must be clean; changed: every file the change touches"}
       paths: {type: string, default: "", description: "space-separated directories or files to check (default: every tracked file)"}
       no-inline-config: {type: boolean, default: false, description: "run ESLint with --no-inline-config, and fail on each eslint-disable comment"}
+      silencers: {type: boolean, default: false, description: "each silencer needs its reason (python-lint.yml lists them); in a test file a .skip needs a comment above it and .only fails"}
       working-directory: {type: string, default: "."}
       ruff-version: {type: string, default: "0.6.9", description: "for a project that also tracks Python files"}
       standards-ref:
@@ -90,6 +92,7 @@ jobs:
           MODE: ${{ inputs.mode }}
           FORMAT_CHECK: ${{ inputs.format-check }}
           NO_INLINE_CONFIG: ${{ inputs.no-inline-config }}
+          SILENCERS: ${{ inputs.silencers }}
           PATHS: ${{ inputs.paths }}
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
@@ -101,6 +104,7 @@ jobs:
             args+=(--prettier)
           fi
           [ "$NO_INLINE_CONFIG" != true ] || args+=(--no-inline-config)
+          [ "$SILENCERS" != true ] || args+=(--silencers)
           read -r -a paths <<< "$PATHS"
           [ ${#paths[@]} -eq 0 ] || args+=(--paths "${paths[@]}")
           case "$MODE" in

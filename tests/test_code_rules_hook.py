@@ -143,7 +143,7 @@ def test_this_repository_runs_the_hook_on_its_own_checkout():
     text = OWN_CONFIG.read_text()
     local = text.split("  - repo: local\n", 1)[1].split("  - repo: ", 1)[0]
     assert "      - id: code-rules\n" in local
-    assert "        entry: python3 tools/code_rules.py --all\n" in local
+    assert "        entry: python3 tools/code_rules.py --all --silencers\n" in local
     assert "        language: python\n" in local  # its own environment, as the hook
     assert f'        additional_dependencies: ["ruff=={ruff_pin()}"]\n' in local
     assert "        pass_filenames: false\n" in local

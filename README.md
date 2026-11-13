@@ -15,7 +15,7 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `.github/workflows/secret-scan.yml` | gitleaks, pinned by digest, on the commits of a pull request or a push; `full-history: true` scans every commit. A finding names the file, the line and the rule, never the secret |
 | `.github/workflows/test-docker.yml` | builds the project's image and runs its tests inside it |
 | `.github/workflows/image.yml` | multi-arch image (amd64 and arm64 on native runners) pushed to ghcr.io as one manifest list |
-| `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix; `--eslint` adds the project's ESLint and `--prettier` adds `prettier --check`. CI runs it, and a project runs it as a pre-commit hook |
+| `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix; `--eslint` adds the project's ESLint and `--prettier` adds `prettier --check`; `--silencers` checks that every skip, xfail, type ignore and the like carries its reason, and counts them. CI runs it, and a project runs it as a pre-commit hook |
 | `.pre-commit-hooks.yaml` | the code rules as pre-commit hooks: `code-rules` is what `python-lint` runs and `code-rules-node` is what `node-lint` runs. pre-commit installs this repository (`pyproject.toml`: the modules under `tools/` and the pinned ruff) into the hook's own environment, so a project installs nothing |
 | `tools/check_standards.py` | the checks `standards-check` runs; five more (`--require-pr-template`, `--require-pre-commit`, `--require-ticket-template`, `--require-current-templates`, `--require-agent-settings`) are opt-in |
 | `tools/sync_templates.py` | brings a project's copy of the templates up to date: rewrites the shared text of its `CLAUDE.md` from the template and touches nothing else; `--check` changes nothing and exits 1 if something would change; `--all` also copies the templates the project lacks ("Staying current", below) |
@@ -74,6 +74,24 @@ not name the commit.
   `per-file-ignores` or `lint.exclude` is reported like any other, and an `extend-per-file-ignores` entry that names
   a standard rule is a problem of its own. For ESLint, `no-inline-config: true` on `node-lint` does the same to an
   `eslint-disable` comment: it hides nothing and is a problem, as a `# noqa` is. It is off by default in v2.
+- **Every silencer carries its reason.** A `# noqa` is not allowed at all. The other ways to turn a check off in a
+  file are allowed with a reason, and `silencers: true` on `python-lint` or `node-lint` (`code_rules.py --silencers`)
+  checks that each has one. It is off by default in v2.
+  - A pytest `skip`, `skipif` or `xfail` mark needs a `reason=`. A condition says when, not why. The text of
+    `pytest.mark.skip("text")`, `pytest.skip("text")` and `pytest.xfail("text")` is the reason.
+    `pytest.importorskip` names the module that is missing, and that is its reason.
+  - A `# type: ignore` or `# pyright: ignore` needs its error code in brackets, and a comment that says why: after
+    it on the same line, or on the line above.
+  - A `# pragma: no cover` and a `# shellcheck disable=` need a comment on the line above that says why.
+    shellcheck directives are read in `*.sh` and in workflow files, where actionlint runs shellcheck on every
+    `run:` script.
+  - In a JavaScript or TypeScript test file, `.skip` on `it`, `test` or `describe` needs a comment on the line
+    above. `.only` is always a problem.
+
+  A silencer without its reason is a problem line with its fix. The last line of every run counts the silencers
+  left, with or without a reason, and the `eslint-disable` comments, so a rising count shows. The tool checks that
+  a reason is there; a review checks that it is a good one. It cannot see a removed test or a weakened assertion:
+  that is the review's part too.
 - **Each finding says how to fix it.** A file that fails is followed by one line per finding: path, line and column,
   the rule, the linter's message, and a one-sentence fix. At most 50 are shown.
 - **A project with debt.** `mode: changed` checks every file a change touches: a changed file must be clean, a file
