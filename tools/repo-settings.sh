@@ -8,14 +8,15 @@
 # The bypass actor is a User (murphy360's numeric GitHub id), not a RepositoryRole: these are personal
 # repositories, and GitHub's own schema says "OrganizationAdmin is not applicable for personal repositories".
 #
-#   tools/repo-settings.sh <owner>/<repo> [--dry-run] [--ruleset <path>]...
+#   tools/repo-settings.sh <owner>/<repo> [--dry-run] [--ruleset <path>]... [--release-app <app-id>]
 #
-# `--ruleset` replaces the two default rulesets; give it more than once to apply several. Needs `gh`, authenticated
+# `--ruleset` replaces the two default rulesets; give it more than once to apply several. `--release-app` lets that
+# GitHub App (an agent's own identity, tools/agent_app.py) past every tag ruleset too, so it can cut a version. Needs `gh`, authenticated
 # with admin rights on the target repository. `--dry-run` prints what would be sent, without calling the API.
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 <owner>/<repo> [--dry-run] [--ruleset <path>]..." >&2
+  echo "Usage: $0 <owner>/<repo> [--dry-run] [--ruleset <path>]... [--release-app <app-id>]" >&2
   exit 1
 }
 
@@ -26,6 +27,7 @@ shift
 dry_run=0
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ruleset_paths=()
+release_app=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -36,6 +38,14 @@ while [ $# -gt 0 ]; do
     --ruleset)
       [ $# -ge 2 ] || usage
       ruleset_paths+=("$2")
+      shift 2
+      ;;
+    --release-app)
+      [ $# -ge 2 ] || usage
+      case "$2" in
+        '' | *[!0-9]*) usage ;;
+      esac
+      release_app="$2"
       shift 2
       ;;
     *)
@@ -97,7 +107,18 @@ api PUT "repos/$repo/automated-security-fixes"
 apply_ruleset() {
   local path="$1" name body existing_id=""
   name="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['name'])" "$path")"
-  body="$(cat "$path")"
+  # A tag ruleset also lets the release App through, when one is named.
+  body="$(
+    python3 - "$path" "$release_app" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+if sys.argv[2] and data.get("target") == "tag":
+    data.setdefault("bypass_actors", []).append(
+        {"actor_id": int(sys.argv[2]), "actor_type": "Integration", "bypass_mode": "always"}
+    )
+print(json.dumps(data, indent=2))
+PY
+  )"
   echo "Ruleset '$name' from $path"
 
   if [ "$dry_run" -eq 0 ]; then

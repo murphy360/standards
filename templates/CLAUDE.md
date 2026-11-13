@@ -15,6 +15,8 @@ on the ticket and take the next one; never guess. Say on the ticket, in one comm
 - Never change the branch of the main checkout: the owner may be using it. Work in a scratch worktree:
   `git worktree add -b <type>/<short-name> /tmp/<project>-wt/<short-name> origin/main`
   (types: feat/, fix/, docs/, ci/, deploy/). Remove the worktree when the PR is open.
+- Sign in to GitHub as this agent's own GitHub App, never with the owner's login (murphy360/standards,
+  "Agent identities"). Cut a version only when the owner says so in this session.
 - Never `git stash`. Every worktree of a checkout shares one stash stack, so a stash left by one session collides
   with another's work; commit what you need to keep instead.
 - Never `git reset --soft` or `--hard` onto a base that moved on. Merge the base into the branch instead, so the

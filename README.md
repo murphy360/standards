@@ -16,6 +16,7 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `.github/workflows/image.yml` | multi-arch image (amd64 and arm64 on native runners) pushed to ghcr.io as one manifest list |
 | `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix; `--eslint` adds the project's ESLint and `--prettier` adds `prettier --check` |
 | `tools/check_standards.py` | the checks `standards-check` runs; two more (`--require-pr-template`, `--require-pre-commit`) are opt-in |
+| `tools/agent_app.py` | gives each agent its own GitHub identity (a GitHub App): the link that creates it, a one-hour token, the commit author lines |
 | `tools/repo-settings.sh` | applies a repository's settings and its branch ruleset (below); `--dry-run` prints what it would send |
 | `templates/ci.yml` | a project's CI calling the workflows: one run per ref, a fixed-name `result` job to require |
 | `templates/eslint.config.mjs` | the ESLint config a TypeScript project starts from |
@@ -123,6 +124,29 @@ In `main.json` the bypass is `bypass_mode: "pull_request"`. The owner can merge 
 but a direct push to main is refused, from the owner's login too. In `version-tags.json` the bypass is `always`:
 the owner moves a major tag by hand when releasing. A session that signs in with the owner's login still holds
 both bypasses, so agent sessions are meant to sign in as an identity of their own, with the write role and no bypass.
+
+### Agent identities
+
+Each agent (Claude, Grok, Codex, Copilot, Jules) signs in to GitHub as its own GitHub App, never with the owner's
+login. Its commits and pull requests show as `<owner>-<agent>[bot]`, and it holds neither ruleset's bypass. An
+agent that already pushes through its own App, from its vendor, needs nothing more; check it on a real pull request.
+
+For an agent that would otherwise use the owner's login:
+
+1. `python3 tools/agent_app.py register claude` prints a link. Open it, create the App, generate a private key,
+   and install the App on the repositories the agent works in. Keep the key outside every repository, readable
+   only by the agent (`chmod 600`).
+2. The agent's session sets `AGENT_APP_ID` and `AGENT_APP_KEY` (the key's path), then
+   `export GH_TOKEN="$(python3 tools/agent_app.py token)"` and `gh auth setup-git`. The token lasts an hour; run
+   it again for a longer session.
+3. `python3 tools/agent_app.py git-identity <app-slug>` prints the `git config` lines that make the App the
+   commits' author.
+4. An agent the owner lets cut versions is named to the tag ruleset:
+   `tools/repo-settings.sh <owner>/<repo> --release-app <app-id>`. It moves a version tag only when the owner
+   says so; the ruleset keeps every other agent out.
+
+A key on a machine is as safe as the machine: an agent that can read the owner's own `gh` login can still use it.
+Give each agent its own key and nothing else.
 
 ### From v1 to v2
 

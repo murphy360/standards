@@ -64,6 +64,16 @@ def test_a_custom_ruleset_names_itself_in_the_plan(tmp_path):
     assert "version-tags" not in res.stdout  # --ruleset replaces the defaults
 
 
+def test_release_app_is_let_past_tag_rulesets_only():
+    res = run("owner/repo", "--dry-run", "--release-app", "42")
+    assert res.returncode == 0, res.stderr
+    main_part, tag_part = res.stdout.split("Ruleset 'version-tags'")
+    assert '"actor_type": "Integration"' not in main_part
+    assert '"actor_id": 42' in tag_part
+    assert '"actor_type": "Integration"' in tag_part
+    assert run("owner/repo", "--dry-run", "--release-app", "x").returncode == 1
+
+
 def test_ruleset_can_be_given_more_than_once(tmp_path):
     paths = []
     for name in ("first", "second"):
