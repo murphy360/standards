@@ -3,6 +3,8 @@
 # change touches): this repository is clean, and a change to the workflow is tried in both modes before any project
 # takes it. One run per ref (concurrency, below), and the new checks (check-pr-template, check-pre-commit-config)
 # are turned on here to prove the opt-in flags work, since this repository now carries both files itself.
+# `node`, `test-docker` and `image` run the other three workflows on the small projects in tests/fixtures, so that
+# every workflow this repository ships runs here before a tag moves. `image` only builds: nothing is published here.
 # `secret-scan` runs on the commits of the change and `secret-scan-history` on the whole history, so both are tried.
 name: ci
 on:
@@ -35,6 +37,27 @@ jobs:
     with:
       check-pr-template: true
       check-pre-commit-config: true
+  node:
+    uses: ./.github/workflows/node-lint.yml
+    with:
+      format-check: true
+      working-directory: tests/fixtures/node-project
+  test-docker:
+    uses: ./.github/workflows/test-docker.yml
+    with:
+      context: tests/fixtures/docker-project
+      file: tests/fixtures/docker-project/Dockerfile
+      command: sh tests/fixtures/docker-project/test.sh
+  image:
+    uses: ./.github/workflows/image.yml
+    with:
+      image: standards-fixture
+      context: tests/fixtures/docker-project
+      file: tests/fixtures/docker-project/Dockerfile
+      push: false   # both architectures build; no image is pushed
+    permissions:
+      contents: read
+      packages: write   # image.yml asks for it, and a caller must grant what the workflow it calls asks for
   secret-scan:
     uses: ./.github/workflows/secret-scan.yml
   secret-scan-history:
@@ -56,7 +79,7 @@ jobs:
   result:
     name: result
     if: always()
-    needs: [lint, lint-changed, shell, workflows, standards, secret-scan, secret-scan-history, tests]
+    needs: [lint, lint-changed, shell, workflows, standards, node, test-docker, image, secret-scan, secret-scan-history, tests]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
