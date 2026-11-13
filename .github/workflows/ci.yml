@@ -19,13 +19,11 @@ jobs:
     uses: ./.github/workflows/python-lint.yml
     with:
       format-check: true
-      standards-ref: ${{ github.sha }}
   lint-changed:
     uses: ./.github/workflows/python-lint.yml
     with:
       format-check: true
       mode: changed
-      standards-ref: ${{ github.sha }}
   shell:
     uses: ./.github/workflows/shell-lint.yml
     with:
@@ -35,7 +33,6 @@ jobs:
   standards:
     uses: ./.github/workflows/standards-check.yml
     with:
-      standards-ref: ${{ github.sha }}
       check-pr-template: true
       check-pre-commit-config: true
   secret-scan:
