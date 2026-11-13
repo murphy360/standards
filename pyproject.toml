@@ -22,3 +22,9 @@ code-rules = "code_rules:main"
 [tool.hatch.build.targets.wheel]
 include = ["tools/*.py"]
 sources = ["tools"]
+
+# pyright (type-check.yml) checks tools/ only, in the standard's basic mode. tests/ is left out for now: it holds 27
+# findings, all of one kind, a value that may be None (a module spec, a regex match) used without a check. `include`
+# widens to tests/ once they are paid down.
+[tool.pyright]
+include = ["tools"]

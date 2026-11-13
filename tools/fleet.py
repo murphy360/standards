@@ -198,12 +198,13 @@ def workflow_calls(text: str, major: int, local: bool = False) -> list[dict]:
             continue
         call = CALL_RE.match(m.group(1))
         here = LOCAL_RE.match(m.group(1)) if local else None
-        if not call and not here:
+        hit = call or here
+        if not hit:
             continue
         ref = call.group(2) if call else "local"
         out.append(
             {
-                "workflow": (call or here).group(1),
+                "workflow": hit.group(1),
                 "ref": ref,
                 "kind": ref_kind(ref, major),
                 "version": m.group(2),
@@ -465,7 +466,7 @@ def default_owner() -> str:
 
 
 def parse_args(argv) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument(
         "--owner",
         help="whose repositories (default: the owner of the repository `gh` "

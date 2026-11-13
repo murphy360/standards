@@ -5,6 +5,8 @@
 # are turned on here to prove the opt-in flags work, since this repository now carries both files itself.
 # `node`, `test-docker` and `image` run the other three workflows on the small projects in tests/fixtures, so that
 # every workflow this repository ships runs here before a tag moves. `image` only builds: nothing is published here.
+# `types` runs type-check on this repository's own tools, `types-python` on a small project with a dependency to
+# install, and `types-node` runs the TypeScript half on the Node fixture.
 # `secret-scan` runs on the commits of the change and `secret-scan-history` on the whole history, so both are tried.
 name: ci
 on:
@@ -62,6 +64,18 @@ jobs:
     permissions:
       contents: read
       packages: write   # image.yml asks for it, and a caller must grant what the workflow it calls asks for
+  types:
+    uses: ./.github/workflows/type-check.yml   # pyright on tools/; [tool.pyright] in pyproject.toml says why only tools/
+  types-python:
+    uses: ./.github/workflows/type-check.yml
+    with:
+      working-directory: tests/fixtures/python-project
+      install-command: pip install -r requirements.txt   # without it the fixture's one import is a finding
+  types-node:
+    uses: ./.github/workflows/type-check.yml
+    with:
+      language: typescript
+      working-directory: tests/fixtures/node-project
   secret-scan:
     uses: ./.github/workflows/secret-scan.yml
   secret-scan-history:
@@ -95,7 +109,7 @@ jobs:
   result:
     name: result
     if: always()
-    needs: [lint, lint-changed, shell, workflows, standards, node, test-docker, image, secret-scan, secret-scan-history, tests, hook]
+    needs: [lint, lint-changed, shell, workflows, standards, node, test-docker, image, types, types-python, types-node, secret-scan, secret-scan-history, tests, hook]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

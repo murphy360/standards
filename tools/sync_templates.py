@@ -341,7 +341,7 @@ def copy_templates(
 
 
 def main(argv=None, templates: Path = TEMPLATES) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument("checkout", help="the project's checkout")
     ap.add_argument(
         "--check",

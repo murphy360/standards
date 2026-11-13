@@ -1,6 +1,7 @@
 # This repository's own updates: the pinned actions in its workflows (every project that calls them gets the update
-# by moving to the next tag of this repository), and the two small projects in tests/fixtures that ci.yml runs
-# node-lint, test-docker and image on. An update there is how a new ESLint, Prettier or base image is tried here first.
+# by moving to the next tag of this repository), and the small projects in tests/fixtures that ci.yml runs
+# node-lint, type-check, test-docker and image on. An update there is how a new ESLint, Prettier or base image is
+# tried here first.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -16,6 +17,9 @@ updates:
     schedule: {interval: weekly}
     groups:
       javascript: {patterns: ["*"]}
+  - package-ecosystem: pip        # the type-check fixture: the one package its source imports
+    directory: /tests/fixtures/python-project
+    schedule: {interval: weekly}
   - package-ecosystem: docker     # the test-docker and image fixture: its base image
     directory: /tests/fixtures/docker-project
     schedule: {interval: weekly}

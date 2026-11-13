@@ -574,7 +574,7 @@ def changed_problems(now: dict, root: Path) -> tuple[list[str], list[str]]:
     changed, note = changed_files(root)
     if changed is None:
         if not in_ci():
-            return [], [note]
+            return [], [note] if note else []
         return [missing_base("cannot tell what this branch changed")], []
     notes = [f"code_rules: {len(changed)} changed file(s) checked"]
     return touched_problems(changed, now, root), notes
@@ -643,7 +643,7 @@ def format_only_problems(root: Path) -> tuple[list[str], list[str]]:
         commit,
         "HEAD",
     )
-    if diff is None:
+    if not commit or diff is None:
         return [missing_base("cannot prove a format-only change")], []
     what = {"A": "is added", "D": "is deleted"}
     problems, python = [], []
@@ -716,7 +716,7 @@ def summary(now: dict, problems: list[str]) -> str:
 
 
 def parse_args(argv) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument(
         "--root",
         default=".",

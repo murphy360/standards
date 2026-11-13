@@ -146,6 +146,8 @@ def ruff_settings(path: Path) -> dict | None:
 
     A file that cannot be read or parsed holds none here: ruff reports it itself.
     """
+    if tomllib is None:
+        return None
     try:
         doc = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):

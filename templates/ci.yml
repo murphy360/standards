@@ -35,6 +35,13 @@ jobs:
   #     format-check: true
   #     # mode: changed
   #     # no-inline-config: true  # an eslint-disable comment hides nothing and is a problem
+  # A type check: pyright in basic mode for Python, the project's own tsc for TypeScript. A project with findings left
+  # narrows `include` in its pyright config or tsconfig.json, with the reason beside it. Add `types` to result's needs.
+  # types:
+  #   uses: murphy360/standards/.github/workflows/type-check.yml@v2
+  #   with:
+  #     install-command: pip install -r requirements.txt  # what the code imports, so that pyright sees it
+  #     # language: typescript  # instead: npm ci, then tsc --noEmit with the project's tsconfig.json
   shell:
     uses: murphy360/standards/.github/workflows/shell-lint.yml@v2
   workflows:

@@ -242,7 +242,7 @@ def check(
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument("--root", default=".")
     ap.add_argument(
         "--require-pr-template",
