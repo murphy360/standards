@@ -10,12 +10,13 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `.github/workflows/standards-check.yml` | Fails a project that lacks a `.github/dependabot.yml` covering its ecosystems, pins an action to anything but a commit SHA, or has no `CLAUDE.md`; `check-templates: true` also fails one whose copy of the shared text of `CLAUDE.md` fell behind the template, or whose CI has no job named `result` |
 | `.github/workflows/python-lint.yml` | ruff with the project's config plus the standard complexity limits, no `# noqa`, and the file-size limit (`tools/code_rules.py`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `ruff format --check` in the same scope; `paths` limits it to some directories; `format-only: true` proves a pull request only re-formats |
 | `.github/workflows/node-lint.yml` | ESLint with the project's config plus the standard complexity limits, and the file-size limit (`tools/code_rules.py --eslint`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `prettier --check` in the same scope; `paths` limits it to some directories. Added in v2.2.0 |
-| `.github/workflows/shell-lint.yml` | shellcheck on every tracked `*.sh`, pinned |
+| `.github/workflows/shell-lint.yml` | shellcheck on every tracked `*.sh`, pinned (v0.11.0, the version the pre-commit template pins) |
 | `.github/workflows/actionlint.yml` | actionlint on the project's workflows |
 | `.github/workflows/secret-scan.yml` | gitleaks, pinned by digest, on the commits of a pull request or a push; `full-history: true` scans every commit. A finding names the file, the line and the rule, never the secret |
 | `.github/workflows/test-docker.yml` | builds the project's image and runs its tests inside it |
 | `.github/workflows/image.yml` | multi-arch image (amd64 and arm64 on native runners) pushed to ghcr.io as one manifest list |
-| `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix; `--eslint` adds the project's ESLint and `--prettier` adds `prettier --check` |
+| `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix; `--eslint` adds the project's ESLint and `--prettier` adds `prettier --check`. CI runs it, and a project runs it as a pre-commit hook |
+| `.pre-commit-hooks.yaml` | the code rules as pre-commit hooks: `code-rules` is what `python-lint` runs and `code-rules-node` is what `node-lint` runs. pre-commit installs this repository (`pyproject.toml`: the modules under `tools/` and the pinned ruff) into the hook's own environment, so a project installs nothing |
 | `tools/check_standards.py` | the checks `standards-check` runs; four more (`--require-pr-template`, `--require-pre-commit`, `--require-ticket-template`, `--require-current-templates`) are opt-in |
 | `tools/sync_templates.py` | brings a project's copy of the templates up to date: rewrites the shared text of its `CLAUDE.md` from the template and touches nothing else; `--check` changes nothing and exits 1 if something would change; `--all` also copies the templates the project lacks ("Staying current", below) |
 | `tools/agent_app.py` | gives each agent its own GitHub identity (a GitHub App): the link that creates it, a one-hour token, the commit author lines |
@@ -28,7 +29,7 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `templates/pull_request_template.md` | the pull request body from "Definition of done" |
 | `templates/ISSUE_TEMPLATE/ticket.md` | the ticket, an implementer's whole brief: the problem or the owner's direction, what to build, the acceptance checklist, "For the implementer", what is out of scope, the decisions the owner reserves |
 | `templates/ISSUE_TEMPLATE/config.yml` | keeps the blank issue beside the ticket template, for a quick note |
-| `templates/pre-commit-config.yaml` | ruff, ruff format, shellcheck, actionlint and gitleaks, pinned, so a finding is caught before the push and a secret before the commit |
+| `templates/pre-commit-config.yaml` | the code rules (the `code-rules` hook), ruff, ruff format, shellcheck, actionlint and gitleaks, each pinned at the version CI uses, so a finding is caught before the push and a secret before the commit |
 | `templates/rulesets/main.json` | the branch ruleset `tools/repo-settings.sh` applies: pull request required, linear history, no force push, the `result` job required; the owner can merge a pull request past a failed check, and nobody can push to main directly |
 | `templates/rulesets/version-tags.json` | the tag ruleset `tools/repo-settings.sh` applies: only the owner can create, move or delete a `v*` tag |
 | `tests/fixtures/` | the two small projects (Node, Docker) this repository's own CI runs `node-lint`, `test-docker` and `image` on, so every workflow runs here before a tag moves |
@@ -100,9 +101,19 @@ not name the commit.
   never leaves the required check missing. `templates/rulesets/main.json` and `tools/repo-settings.sh` turn this
   into branch protection: pull request required, linear history, no force push, `result` required, the owner can
   bypass.
-- **Pre-commit catches a finding before the push.** `templates/pre-commit-config.yaml`: ruff and ruff format at the
-  pin `python-lint.yml` uses, shellcheck, actionlint, gitleaks, and the usual hygiene hooks (merge conflicts, large
-  files, end of file). Every hook pinned to a commit SHA.
+- **Local equals CI: one command before a push.** `pre-commit run --all-files` runs what the lint in CI runs.
+  `templates/pre-commit-config.yaml` holds the `code-rules` hook (`.pre-commit-hooks.yaml`): the code rules on
+  every file, with the complexity limits, the `# noqa` rule, the size limit and the format, printing the lines CI
+  prints. It also holds ruff and ruff format at the pin `python-lint.yml` uses, shellcheck at the version
+  `shell-lint.yml` uses, actionlint, gitleaks, and the usual hygiene hooks (merge conflicts, large files, end of
+  file). Every hook is pinned to a commit SHA. pre-commit builds each hook's own environment, with the pinned
+  ruff in it, so nothing is installed on the machine and no second ruff can drift. The machine needs pre-commit
+  and Python 3.12 or newer.
+- **The hook's commit follows the release.** A project pins `murphy360/standards` in its pre-commit config at the
+  commit of the release its CI calls, so the hook and CI hold the same rules. When the standard releases, the
+  project moves that `rev` to the new release's commit; the template names it. A project whose lint job passes
+  `paths` or `working-directory`, or runs without `format-check`, or in `mode: changed`, gives the hook the same in
+  `args` (`--paths src`, `--root <directory>`, `--no-format`, or no `--all`).
 - **A secret is stopped before the commit, and again in CI.** The gitleaks hook refuses a commit that stages a
   credential. `secret-scan` scans the commits of a pull request or a push with the same gitleaks version, so a
   commit made without the hook is stopped before it is merged. A finding names the file, the line and the rule,
@@ -131,12 +142,15 @@ murphy360/template-python`, which already holds the steps below. An existing pro
    between them is the standard's ("Staying current", below).
 4. Copy `templates/pull_request_template.md` to `.github/pull_request_template.md`.
 5. Copy `templates/pre-commit-config.yaml` to `.pre-commit-config.yaml`; `pip install pre-commit && pre-commit
-   install` once per checkout. Turn the matching checks on in `standards-check`'s `with:` once both templates are
+   install` once per checkout. It holds the code rules as a hook, so nothing else is installed: no ruff, and no
+   checkout of this repository. Turn the matching checks on in `standards-check`'s `with:` once both templates are
    in (`check-pr-template: true`, `check-pre-commit-config: true`): they default off so a project pinned at `@v2`
    sees no new failure until it opts in.
 6. Pin every other action in the project's workflows to a commit SHA.
-7. See what is left: `pip install ruff==0.6.9 && python3 <standards>/tools/code_rules.py --all`.
-8. If anything is left, set `mode: changed` on the lint job until it reads zero, then remove it.
+7. See what is left: `pre-commit run --all-files`. The `code-rules` hook prints every finding CI would print.
+8. If anything is left, set `mode: changed` on the lint job, and `args: []` on the `code-rules` hook so that it
+   checks the same files: the ones the branch changes. The last line of each run counts what is left. Remove both
+   when it reads zero.
 9. With `format-check: true`, Python files must be formatted too. Re-format everything once, in one `ruff format`
    pull request, and set `format-only: true` on that run (for example from a `format-only` label): it proves that
    the pull request changes only the layout of Python files.
@@ -151,8 +165,9 @@ murphy360/template-python`, which already holds the steps below. An existing pro
 A JavaScript or TypeScript project calls `node-lint` instead of `python-lint`, or as a job of its own. Copy
 `templates/eslint.config.mjs` to `eslint.config.mjs`. Add `eslint`, `@eslint/js`, `typescript-eslint` and `prettier`
 to devDependencies and commit the lockfile. `npm ci` installs them, and Dependabot updates them. The same two modes
-apply, and `format-check: true` runs `prettier --check` on the same files. See what ESLint reports with
-`python3 <standards>/tools/code_rules.py --eslint --all`.
+apply, and `format-check: true` runs `prettier --check` on the same files. In `.pre-commit-config.yaml`, use the
+`code-rules-node` hook in place of `code-rules` (add `--prettier` to its `args` with `format-check: true`), run
+`npm ci`, and see what ESLint reports with `pre-commit run --all-files`.
 
 A project that still has a `code_rules_baseline.json` from `v1.0.0` can delete it: the tool no longer reads it, and
 says so in a note.
@@ -257,7 +272,7 @@ v2 is a breaking release. What changed, and what a project must do:
   `mode: changed` until it has none.
 - **`# noqa` is not allowed.** A finding under a `# noqa` is reported, and the comment is a problem itself. Fix
   the finding and remove the comment.
-- **`--report-only` is gone.** Run `code_rules.py --all` to list what is left; it exits 1 while anything is.
+- **`--report-only` is gone.** `pre-commit run --all-files` lists what is left; it fails while anything is.
 - **New:** each finding is printed with its line, rule and fix; `paths` limits the check to some directories; and
   `format-only: true` proves a pull request only re-formats.
 

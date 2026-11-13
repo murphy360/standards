@@ -7,7 +7,7 @@ on:
   workflow_call:
     inputs:
       runs-on: {type: string, default: "ubuntu-latest", description: "a runner label, or a JSON list of labels (a self-hosted runner)"}
-      shellcheck-version: {type: string, default: "v0.10.0"}
+      shellcheck-version: {type: string, default: "v0.11.0", description: "the shellcheck release; the pre-commit template pins the same one"}
 permissions:
   contents: read
 jobs:

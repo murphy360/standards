@@ -1,6 +1,24 @@
 # The standard ruff settings are ruff's defaults (88 columns, ruff format). Nothing to configure: a project adds a
 # [tool.ruff] section only for a reason, and says the reason in a comment.
+#
+# This repository is installable, so that pre-commit can build the code-rules hook (.pre-commit-hooks.yaml): it
+# installs the modules under tools/ and ruff, at the pin python-lint.yml uses, into the hook's own environment.
+# Nothing here is published to an index.
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
 [project]
 name = "murphy360-standards"
 version = "2.0.0"
 requires-python = ">=3.12"
+dependencies = ["ruff==0.6.9"]  # python-lint.yml's ruff-version; a test keeps the two the same
+
+[project.scripts]
+code-rules = "code_rules:main"
+
+# Every module under tools/, found by the pattern and installed at the top level, where a script run as
+# `python3 tools/code_rules.py` finds its siblings too. No list of modules to keep.
+[tool.hatch.build.targets.wheel]
+include = ["tools/*.py"]
+sources = ["tools"]
