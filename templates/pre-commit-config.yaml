@@ -23,9 +23,9 @@ repos:
       - id: ruff-format
   # The code rules, as CI runs them: ruff with the standard complexity limits, no `# noqa`, the file-size limit and
   # the format, on every tracked file. pre-commit builds the hook with its own pinned ruff: nothing to install.
-  # The rev follows the standard's release the project's CI calls; move it when the standard releases.
+  # Move the rev to the release's commit when the standard releases, so that the hook and CI hold the same rules.
   - repo: https://github.com/murphy360/standards
-    rev: c02ef2e21b32492b4c179942d65b041fbc6665a8  # v2.2.0's code rules, with the hook (pull request #45)
+    rev: aed15c92aa03bd48e06965c4018fd49e884dc55f  # v2.2.0's code rules, with the hook (pull request #45)
     hooks:
       - id: code-rules
       # - id: code-rules-node  # a JavaScript or TypeScript project: what node-lint runs (after npm ci)

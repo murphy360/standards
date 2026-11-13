@@ -142,7 +142,9 @@ murphy360/template-python`, which already holds the steps below. An existing pro
    sees no new failure until it opts in.
 6. Pin every other action in the project's workflows to a commit SHA.
 7. See what is left: `pre-commit run --all-files`. The `code-rules` hook prints every finding CI would print.
-8. If anything is left, set `mode: changed` on the lint job until it reads zero, then remove it.
+8. If anything is left, set `mode: changed` on the lint job, and `args: []` on the `code-rules` hook so that it
+   checks the same files: the ones the branch changes. The last line of each run counts what is left. Remove both
+   when it reads zero.
 9. With `format-check: true`, Python files must be formatted too. Re-format everything once, in one `ruff format`
    pull request, and set `format-only: true` on that run (for example from a `format-only` label): it proves that
    the pull request changes only the layout of Python files.
