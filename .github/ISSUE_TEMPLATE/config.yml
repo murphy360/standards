@@ -1,0 +1,3 @@
+# From templates/ISSUE_TEMPLATE/config.yml in murphy360/standards. A new issue offers the ticket template and a
+# blank issue: the owner files a quick note without the sections.
+blank_issues_enabled: true

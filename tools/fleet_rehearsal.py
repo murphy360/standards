@@ -4,8 +4,9 @@
 
 fleet.py finds the adopters; this module does the rest. For each adopter it:
 
-1. takes ``tools/`` of this checkout at the ref (``git archive``, so a tag, a
-   branch or a commit all work, and nothing is fetched);
+1. takes ``tools/`` of this checkout at the ref, and the templates beside it
+   (``git archive``, so a tag, a branch or a commit all work, and nothing is
+   fetched);
 2. clones the adopter into a temporary directory (``gh repo clone``, depth 1);
 3. runs the tools the way the adopter's workflows would. A repository that calls
    ``python-lint`` gets ``code_rules.py --all``, with ``--no-format`` unless it
@@ -42,6 +43,8 @@ RUFF = "0.6.9"  # the ruff python-lint.yml pins (a test keeps the two in step)
 CHECK_FLAGS = (
     ("check-pr-template", "--require-pr-template"),
     ("check-pre-commit-config", "--require-pre-commit"),
+    ("check-ticket-template", "--require-ticket-template"),
+    ("check-templates", "--require-current-templates"),
     ("check-agent-settings", "--require-agent-settings"),
 )
 WORST = ("error", "FAIL", "debt", "pass", "-")
@@ -116,8 +119,11 @@ def step_key(step: dict) -> tuple:
 
 
 def tools_at(ref: str, root: Path, dest: Path) -> Path:
-    """``tools/`` of the checkout at ``root``, as it is at ``ref``, under ``dest``."""
-    cmd = ["git", "-C", str(root), "archive", "--format=tar", ref, "--", "tools"]
+    """``tools/`` of the checkout at ``root``, as it is at ``ref``, under ``dest``.
+
+    The whole tree is taken, so ``templates/`` is beside the tools, where
+    ``check_standards.py --require-current-templates`` reads it."""
+    cmd = ["git", "-C", str(root), "archive", "--format=tar", ref]
     try:
         res = subprocess.run(cmd, capture_output=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as e:

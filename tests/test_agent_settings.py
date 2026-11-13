@@ -200,7 +200,8 @@ ALLOWED = [
     'git commit -m "say never git stash, never --no-verify, never push --force"',
     "git commit -m 'gh pr merge --admin is refused'",
     "git commit -m -n",
-    "git commit -m \"$(cat <<'EOF'\nNever git stash.\n\ngit push -f origin main\nEOF\n)\"",
+    "git commit -m \"$(cat <<'EOF'\nNever git stash.\n\ngit push -f origin main\n"
+    'EOF\n)"',
     "git reset --hard",
     "git reset --hard HEAD",
     "git reset --soft HEAD",
