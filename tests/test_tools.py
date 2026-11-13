@@ -9,6 +9,7 @@ run ruff are skipped where ruff is not installed.
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -782,12 +783,9 @@ def test_node_lint_checks_every_file_and_has_no_baseline():
     assert "node-lint.yml@v2" in text and "Added in v2.2.0" in text
     assert "--eslint" in text and "--prettier" in text and "--no-format" in text
     assert "export CODE_RULES_BASE" in text
-    for pin in (
-        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1",
-        "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0",
-        "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0",
-    ):
-        assert pin in text
+    # any commit SHA with its version beside it: Dependabot moves the pin
+    for action in ("actions/checkout", "actions/setup-python", "actions/setup-node"):
+        assert re.search(rf"{action}@[0-9a-f]{{40}}  # v\d+\.\d+\.\d+\n", text), action
     assert "runner.environment == 'self-hosted'" in text
     assert "timeout-minutes: 15" in text
     py = (ROOT / ".github" / "workflows" / "python-lint.yml").read_text()

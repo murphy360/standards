@@ -120,7 +120,7 @@ def test_the_log_prints_the_commit_behind_a_tag(tmp_path, server):
 def test_standards_ref_does_not_move_the_tools_off_the_workflows_commit(
     tmp_path, server
 ):
-    """A caller that still passes standards-ref keeps working, and it changes nothing."""
+    """A caller that still passes standards-ref keeps working; it changes nothing."""
     res, tools = run_step(
         tmp_path, server, WORKFLOW_SHA=server["one"], STANDARDS_REF="v2"
     )
