@@ -34,11 +34,6 @@ jobs:
     with:
       check-pr-template: true
       check-pre-commit-config: true
-  # TEMPORARY (removed before this pull request is ready): two callers pinned at a commit that is not this one.
-  proof-standards-check:
-    uses: murphy360/standards/.github/workflows/standards-check.yml@e8b03b27411d629eabd24099b7b6a059135ff52d
-  proof-python-lint:
-    uses: murphy360/standards/.github/workflows/python-lint.yml@c12e351e792fa20e20e84777d439d858ee000796
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
