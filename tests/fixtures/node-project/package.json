@@ -1,0 +1,13 @@
+{
+  "name": "standards-node-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The project ci.yml runs node-lint.yml on. Nobody installs it.",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.15.0",
+    "prettier": "^3.10.1",
+    "typescript": "^6.0.0",
+    "typescript-eslint": "^8.72.2"
+  }
+}

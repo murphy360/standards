@@ -26,6 +26,7 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `templates/pre-commit-config.yaml` | ruff, ruff format, shellcheck and actionlint, pinned, so a finding is caught before the push |
 | `templates/rulesets/main.json` | the branch ruleset `tools/repo-settings.sh` applies: pull request required, linear history, no force push, the `result` job required; the owner can merge a pull request past a failed check, and nobody can push to main directly |
 | `templates/rulesets/version-tags.json` | the tag ruleset `tools/repo-settings.sh` applies: only the owner can create, move or delete a `v*` tag |
+| `tests/fixtures/` | the two small projects (Node, Docker) this repository's own CI runs `node-lint`, `test-docker` and `image` on, so every workflow runs here before a tag moves |
 
 The check workflows above (standards-check, python-lint, node-lint, shell-lint, actionlint) take `runs-on`: GitHub's
 `ubuntu-latest` by default, or a JSON list of labels for a self-hosted runner (`'["ci", "X64"]'`). A private
