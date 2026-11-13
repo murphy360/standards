@@ -26,9 +26,15 @@ WORKFLOW = ROOT / ".github" / "workflows" / "standards-check.yml"
 
 
 def load(name: str, path: Path):
+    """A file as a module. No bytecode is written: a ``__pycache__`` in templates/
+    would be one more file a project copies."""
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    before, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = before
     return module
 
 
@@ -422,6 +428,7 @@ def test_the_settings_run_the_guard_before_every_shell_command():
 
 
 def test_the_settings_hold_only_the_refusals():
+    assert sorted(p.name for p in TEMPLATES.iterdir()) == ["guard.py", "settings.json"]
     data = settings()
     assert set(data) == {"permissions", "hooks"}
     assert set(data["permissions"]) == {"deny"}
