@@ -80,6 +80,7 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
       - run: pip install "ruff==${{ inputs.ruff-version }}"
+      - run: npm ci
       - name: Code rules (every file, or the files a change touches); ESLint, complexity, file size, prettier
         env:
           MODE: ${{ inputs.mode }}
