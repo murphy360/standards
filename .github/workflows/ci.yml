@@ -3,6 +3,7 @@
 # change touches): this repository is clean, and a change to the workflow is tried in both modes before any project
 # takes it. One run per ref (concurrency, below), and the new checks (check-pr-template, check-pre-commit-config)
 # are turned on here to prove the opt-in flags work, since this repository now carries both files itself.
+# `secret-scan` runs on the commits of the change and `secret-scan-history` on the whole history, so both are tried.
 name: ci
 on:
   push:
@@ -34,6 +35,12 @@ jobs:
     with:
       check-pr-template: true
       check-pre-commit-config: true
+  secret-scan:
+    uses: ./.github/workflows/secret-scan.yml
+  secret-scan-history:
+    uses: ./.github/workflows/secret-scan.yml
+    with:
+      full-history: true
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -43,11 +50,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pytest "ruff==0.6.9"
+      - name: The gitleaks image, so the secret-scan test runs the real scan (it never pulls, and skips without it)
+        run: docker pull "$(grep -o 'ghcr.io/gitleaks/gitleaks:[^ ]*' .github/workflows/secret-scan.yml)"
       - run: python3 -m pytest -q tests
   result:
     name: result
     if: always()
-    needs: [lint, lint-changed, shell, workflows, standards, tests]
+    needs: [lint, lint-changed, shell, workflows, standards, secret-scan, secret-scan-history, tests]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

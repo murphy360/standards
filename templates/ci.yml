@@ -36,6 +36,10 @@ jobs:
     uses: murphy360/standards/.github/workflows/shell-lint.yml@v2
   workflows:
     uses: murphy360/standards/.github/workflows/actionlint.yml@v2
+  secret-scan:
+    uses: murphy360/standards/.github/workflows/secret-scan.yml@v2
+    # with:
+    #   full-history: true  # every commit, not only this change's: once when adopting, or on a schedule
   test:
     uses: murphy360/standards/.github/workflows/test-docker.yml@v2
     with:
@@ -54,7 +58,7 @@ jobs:
   result:
     name: result
     if: always()
-    needs: [standards, lint, shell, workflows, test, image]
+    needs: [standards, lint, shell, workflows, secret-scan, test, image]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
