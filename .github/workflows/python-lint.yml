@@ -17,6 +17,11 @@
 # base (a schedule, a dispatch, a new branch or tag) mode changed checks every file. format-only (a pull request that
 # only re-formats) also needs it: it proves that every file the pull request changes is a Python file with the syntax
 # tree it had.
+#
+# The project's ruff config. It may add rules, set the line length and exclude files. It cannot switch a standard
+# rule off: a standard finding under per-file-ignores or lint.exclude is reported like any other, and an
+# extend-per-file-ignores entry that names a standard rule is a problem. Every tracked Python file ruff does not
+# check is printed by name on every run, and the last line counts them. That is information, not a failure.
 name: python-lint
 on:
   workflow_call:
