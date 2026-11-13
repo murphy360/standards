@@ -28,6 +28,9 @@ needs_ruff = pytest.mark.skipif(shutil.which("ruff") is None, reason="no ruff")
 # what pre-commit accepts in a hook of a manifest, as far as this repository uses it
 REQUIRED_KEYS = {"id", "name", "entry", "language"}
 KNOWN_KEYS = REQUIRED_KEYS | {"description", "args", "pass_filenames"}
+# the one tool a document may tell a reader to run from a checkout of this repository:
+# it copies the templates out of that checkout (README, "Staying current")
+NEEDS_A_CHECKOUT = {"sync_templates.py"}
 STANDARDS_HOOK_RE = re.compile(
     r"^  - repo: https://github\.com/murphy360/standards\n"
     r"    rev: ([0-9a-f]{40})  # (\S.*)\n"
@@ -186,11 +189,12 @@ def test_shellcheck_is_one_version_in_the_workflow_and_the_configs():
 # repository
 
 
-def test_no_document_tells_a_reader_to_run_a_path_inside_the_standards():
+def test_no_document_tells_a_reader_to_run_the_code_rules_from_a_checkout():
     documents = [ROOT / "README.md", ROOT / "CLAUDE.md"]
     documents += [p for p in (ROOT / "templates").rglob("*") if p.is_file()]
     for path in documents:
-        assert "<standards>" not in path.read_text(), path.name
+        named = set(re.findall(r"<standards>/tools/([\w.-]+)", path.read_text()))
+        assert named <= NEEDS_A_CHECKOUT, path.name
     for path in (ROOT / "templates").rglob("*"):
         if path.is_file():  # a project has no such file: the hook runs it
             assert "code_rules.py" not in path.read_text(), path.name
