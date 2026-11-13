@@ -1,10 +1,12 @@
 """tools/repo-settings.sh and the templates it applies.
 
 ``--dry-run`` never calls ``gh``, so the script's own behaviour is tested without
-network access or a real token; only its printed plan is checked.
+network access or a real token; only its printed plan is checked. Where a test needs
+GitHub's answer, a stub ``gh`` stands first on the PATH and no login is in reach.
 """
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -15,6 +17,20 @@ RULESET = ROOT / "templates" / "rulesets" / "main.json"
 TAG_RULESET = ROOT / "templates" / "rulesets" / "version-tags.json"
 PRE_COMMIT = ROOT / "templates" / "pre-commit-config.yaml"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+GH_STUB = """#!/bin/sh
+# Stands in for gh: logs each call, and refuses the calls whose body holds $GH_REFUSE,
+# as GitHub refuses secret scanning on a private repository of a personal account.
+body=""
+case " $* " in *" --input "*) body="$(cat)" ;; esac
+printf '%s %s\\n' "$*" "$(printf '%s' "$body" | tr -d ' \\n')" >> "$GH_LOG"
+case "$body" in
+  *"$GH_REFUSE"*)
+    echo '{"message": "Secret scanning is not available for this repository."}'
+    echo "gh: Secret scanning is not available for this repository. (HTTP 422)" >&2
+    exit 1
+    ;;
+esac
+"""
 
 
 def run(*args: str) -> subprocess.CompletedProcess:
@@ -43,6 +59,62 @@ def test_dry_run_plans_every_call_without_invoking_gh():
         == 2
     )
     assert "Done (dry run: nothing was changed)" in out
+
+
+def test_dry_run_plans_secret_scanning_and_push_protection():
+    res = run("murphy360/standards", "--dry-run")
+    assert res.returncode == 0, res.stderr
+    out = res.stdout
+    assert '"secret_scanning": {"status": "enabled"}' in out
+    assert '"secret_scanning_push_protection": {"status": "enabled"}' in out
+    # one call each, apart from the merge settings: one refusal does not take the other
+    assert out.count("DRY RUN: gh api --method PATCH repos/murphy360/standards\n") == 3
+    assert "warning" not in res.stderr
+
+
+def run_with_stub_gh(tmp_path, refuse: str) -> tuple[subprocess.CompletedProcess, str]:
+    """The script for real, against a stub ``gh`` that refuses some calls."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(GH_STUB)
+    (bin_dir / "gh").chmod(0o755)
+    log = tmp_path / "gh.log"
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "HOME": str(tmp_path),  # no login in reach, whatever gh this finds
+        "GH_CONFIG_DIR": str(tmp_path / "no-login"),
+        "GH_LOG": str(log),
+        "GH_REFUSE": refuse,
+    }
+    res = subprocess.run(
+        ["bash", str(SCRIPT), "example-owner/example-repo"],
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+    )
+    return res, log.read_text()
+
+
+def test_refused_secret_scanning_is_a_warning_and_the_rest_still_applies(tmp_path):
+    res, log = run_with_stub_gh(tmp_path, "security_and_analysis")
+    assert res.returncode == 0, res.stderr
+    assert "warning: GitHub refused to turn on Secret scanning" in res.stderr
+    assert "warning: GitHub refused to turn on Push protection" in res.stderr
+    assert res.stderr.count("warning:") == 2
+    calls = log.splitlines()
+    refused = max(i for i, call in enumerate(calls) if "security_and_analysis" in call)
+    after = calls[refused + 1 :]
+    posts = "--method POST repos/example-owner/example-repo/rulesets"
+    assert sum(posts in call for call in after) == 2  # both rulesets still applied
+    assert res.stdout.rstrip().endswith("Done")
+
+
+def test_any_other_refused_call_still_stops_the_script(tmp_path):
+    res, log = run_with_stub_gh(tmp_path, "allow_squash_merge")
+    assert res.returncode != 0
+    assert "warning:" not in res.stderr
+    assert len(log.splitlines()) == 1  # nothing was sent after the refusal
 
 
 def test_usage_errors_without_calling_gh():
@@ -132,11 +204,12 @@ def test_the_tag_ruleset_guards_every_version_tag():
 
 def test_every_pre_commit_hook_is_pinned_to_a_commit_sha():
     revs = re.findall(r"^\s*rev:\s*(\S+)", PRE_COMMIT.read_text(), re.MULTILINE)
-    assert len(revs) == 4  # pre-commit-hooks, ruff, shellcheck, actionlint
+    assert len(revs) == 5  # pre-commit-hooks, ruff, shellcheck, actionlint, gitleaks
     assert all(SHA_RE.match(rev) for rev in revs), revs
 
 
 def test_pre_commit_config_names_the_tools_it_pins():
     text = PRE_COMMIT.read_text()
-    for hook_id in ("ruff", "ruff-format", "shellcheck", "actionlint-docker"):
-        assert f"id: {hook_id}" in text
+    hooks = ("ruff", "ruff-format", "shellcheck", "actionlint-docker", "gitleaks")
+    for hook_id in hooks:
+        assert f"id: {hook_id}\n" in text

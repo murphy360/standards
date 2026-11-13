@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Applies the repository settings every murphy360 project keeps: squash merge only, auto-merge and "Update branch"
-# on, Dependabot security updates on, and two rulesets:
+# on, Dependabot security updates on, secret scanning and push protection on where GitHub offers them, and two
+# rulesets:
 #   templates/rulesets/main.json: pull request required, linear history, no force push, the "result" job required.
 #     The owner can merge a pull request past a failed check, but a direct push to main is refused for everyone.
 #   templates/rulesets/version-tags.json: only the owner can create, move or delete a v* tag.
@@ -102,6 +103,24 @@ api PUT "repos/$repo/vulnerability-alerts"
 
 echo "Dependabot: automated security fixes on"
 api PUT "repos/$repo/automated-security-fixes"
+
+# GitHub's own secret scanning and push protection. GitHub offers them on a public repository, and on a private one
+# only to an organization that pays for Secret Protection: a private repository on a personal account gets
+# neither, and the API refuses. That is a warning, not a failure: the settings after it still apply, and the
+# gitleaks hook and secret-scan.yml are what cover such a repository.
+# enable_security FEATURE LABEL: turns one security_and_analysis feature on, or warns and carries on.
+enable_security() {
+  local feature="$1" label="$2"
+  echo "$label on, where GitHub offers it"
+  api PATCH "repos/$repo" "{
+  \"security_and_analysis\": {
+    \"$feature\": {\"status\": \"enabled\"}
+  }
+}" || echo "warning: GitHub refused to turn on $label for $repo (README, \"The rules\", says where it is offered)" >&2
+}
+
+enable_security secret_scanning "Secret scanning"
+enable_security secret_scanning_push_protection "Push protection"
 
 # apply_ruleset PATH: creates the ruleset, or replaces the one of the same name.
 apply_ruleset() {
