@@ -33,6 +33,14 @@ project pays for hosted minutes, and each job is billed at least one minute howe
 runners passes them here. The runner needs Docker; on a self-hosted one each job first takes ownership of files a
 previous job's containers left in the workspace.
 
+The workflows that run a tool (standards-check, python-lint, node-lint) take the tool from the commit they were
+called at. A project at `@v2` runs the tools of `v2`, a project pinned at a commit runs the tools of that commit, and
+this repository's own CI runs the tools of the pull request. GitHub names that commit to the workflow as
+`job.workflow_sha`. The run prints it: `standards tools: murphy360/standards@<commit> (<workflow ref>)`. The tools are
+fetched into the runner's temp directory, so nothing is added to the project's workspace. The `standards-ref` input
+is deprecated and has no default: a project that still passes it keeps working, and it is read only if GitHub does
+not name the commit.
+
 ## The rules
 
 - **Style: ruff's defaults.** 88 columns and `ruff format`, the de facto Python standard (Black's line length). A
