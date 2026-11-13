@@ -44,6 +44,7 @@ jobs:
     uses: ./.github/workflows/node-lint.yml
     with:
       format-check: true
+      no-inline-config: true   # the opt-in is tried here: ESLint takes the flag, and the fixture has no disable comment
       working-directory: tests/fixtures/node-project
   test-docker:
     uses: ./.github/workflows/test-docker.yml
@@ -79,10 +80,22 @@ jobs:
       - name: The gitleaks image, so the secret-scan test runs the real scan (it never pulls, and skips without it)
         run: docker pull "$(grep -o 'ghcr.io/gitleaks/gitleaks:[^ ]*' .github/workflows/secret-scan.yml)"
       - run: python3 -m pytest -q tests
+  # The code-rules hook, built by pre-commit from this commit as a project would build it, on a scratch project that
+  # breaks three rules: it must print what tools/code_rules.py prints. It needs the network, so it is no pytest test.
+  hook:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install "pre-commit==4.7.0" "ruff==0.6.9"
+      - run: python3 tests/hook_project.py
   result:
     name: result
     if: always()
-    needs: [lint, lint-changed, shell, workflows, standards, node, test-docker, image, secret-scan, secret-scan-history, tests]
+    needs: [lint, lint-changed, shell, workflows, standards, node, test-docker, image, secret-scan, secret-scan-history, tests, hook]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

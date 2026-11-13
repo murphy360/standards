@@ -54,15 +54,17 @@ on the ticket and take the next one; never guess. Say on the ticket, in one comm
   columns, `ruff format`) or node-lint (ESLint, and Prettier's defaults when `format-check` is on), shell-lint,
   actionlint, secret-scan, test-docker, image. One run per ref: a pull request's superseded run is cancelled, and
   a fixed-name `result` job is what a ruleset requires.
-- The code rules (`code_rules.py`): complexity 15, 15 branches and 60 statements per function, 800 lines per file
-  (1200 for a test). Every file is clean: formatted, no finding, no `# noqa`, under the size limit. CI checks every
-  file on every run, and a finding anywhere fails it; each finding is printed with its line, rule and fix. A change
-  that would take a file over the limit splits it in the same PR. There is no baseline and no flag that skips the
-  rules. Run `code_rules.py --all` before a push. A JavaScript or TypeScript project runs `code_rules.py --eslint`
-  (node-lint does): complexity 15 and 60 statements, and `prettier --check` when formatting is on. A PR that only
-  re-formats Python is labelled `format-only`, and `code_rules.py --format-only` proves it changed no code.
-- Pre-commit hooks (`.pre-commit-config.yaml`, from the template): ruff, ruff format, shellcheck, actionlint and
-  gitleaks, so a finding is caught before the push, not after, and a secret before the commit.
+- The code rules: complexity 15, 15 branches and 60 statements per function, 800 lines per file (1200 for a
+  test). Every file is clean: formatted, no finding, no `# noqa`, under the size limit. CI checks every file on
+  every run, and a finding anywhere fails it; each finding is printed with its line, rule and fix. A change that
+  would take a file over the limit splits it in the same PR. There is no baseline and no flag that skips the
+  rules. A JavaScript or TypeScript project keeps complexity 15 and 60 statements with ESLint (node-lint), and
+  `prettier --check` when formatting is on. A PR that only re-formats Python is labelled `format-only`, and CI
+  proves it changed no code.
+- Before a push, run `pre-commit run --all-files`. It is the one command: the hooks (`.pre-commit-config.yaml`,
+  from the template) are the code rules as CI runs them, ruff, ruff format, shellcheck, actionlint and gitleaks,
+  each at the version CI uses, so what passes here passes the lint in CI, and a secret is caught before the
+  commit. pre-commit builds each hook's own environment: install no linter by hand.
   `pip install pre-commit && pre-commit install` once per checkout.
 - Every third-party action is pinned to a commit SHA; Dependabot (`.github/dependabot.yml`) keeps them and the
   dependencies current, one grouped PR per ecosystem per week.

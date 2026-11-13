@@ -1,0 +1,23 @@
+# The code rules as pre-commit hooks, so that a project runs before a push what CI runs after it. A project names
+# this repository in its .pre-commit-config.yaml at a commit SHA (templates/pre-commit-config.yaml). pre-commit
+# installs this repository into the hook's own environment (pyproject.toml): the modules under tools/ and the ruff
+# release python-lint.yml uses. Nothing is installed on the machine, and a ruff it already has is not used.
+# Every tracked file is checked on every run, as CI checks it; the names of the staged files are not passed.
+# A project changes `args` only to say what its lint job's inputs say: `--paths`, `--no-format`, or no `--all` for
+# mode changed.
+- id: code-rules
+  name: code rules (ruff, complexity, no noqa, file size, format)
+  description: What python-lint runs. Every file is clean; each finding is printed with its line, rule and fix.
+  entry: code-rules
+  args: [--all]
+  language: python
+  pass_filenames: false
+# A JavaScript or TypeScript project: what node-lint runs. ESLint comes from the project's node_modules (npm ci),
+# so node is on the machine already. A project whose node-lint has format-check on adds --prettier to the args.
+- id: code-rules-node
+  name: code rules (ESLint, complexity, file size)
+  description: What node-lint runs. The project's own ESLint plus the standard limits, on every tracked file.
+  entry: code-rules
+  args: [--all, --eslint, --no-format]
+  language: python
+  pass_filenames: false

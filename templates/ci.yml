@@ -27,7 +27,7 @@ jobs:
     with:
       format-check: true
       # mode: changed  # default `all`: every file must be clean. `changed`: every file a change touches, while
-      #                # `code_rules.py --all` still lists findings
+      #                # `pre-commit run --all-files` still lists findings
       format-only: ${{ contains(github.event.pull_request.labels.*.name, 'format-only') }}
   # A JavaScript or TypeScript project uses node-lint instead of python-lint, or as a job of its own:
   # node:
@@ -35,6 +35,7 @@ jobs:
   #   with:
   #     format-check: true
   #     # mode: changed
+  #     # no-inline-config: true  # an eslint-disable comment hides nothing and is a problem
   shell:
     uses: murphy360/standards/.github/workflows/shell-lint.yml@v2
   workflows:

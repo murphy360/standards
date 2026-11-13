@@ -204,12 +204,13 @@ def test_the_tag_ruleset_guards_every_version_tag():
 
 def test_every_pre_commit_hook_is_pinned_to_a_commit_sha():
     revs = re.findall(r"^\s*rev:\s*(\S+)", PRE_COMMIT.read_text(), re.MULTILINE)
-    assert len(revs) == 5  # pre-commit-hooks, ruff, shellcheck, actionlint, gitleaks
+    # pre-commit-hooks, ruff, the code rules, shellcheck, actionlint, gitleaks
+    assert len(revs) == 6
     assert all(SHA_RE.match(rev) for rev in revs), revs
 
 
 def test_pre_commit_config_names_the_tools_it_pins():
     text = PRE_COMMIT.read_text()
     hooks = ("ruff", "ruff-format", "shellcheck", "actionlint-docker", "gitleaks")
-    for hook_id in hooks:
+    for hook_id in (*hooks, "code-rules"):
         assert f"id: {hook_id}\n" in text
