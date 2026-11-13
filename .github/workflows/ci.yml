@@ -21,11 +21,13 @@ jobs:
     uses: ./.github/workflows/python-lint.yml
     with:
       format-check: true
+      silencers: true   # every skip, type ignore and shellcheck disable here carries its reason
   lint-changed:
     uses: ./.github/workflows/python-lint.yml
     with:
       format-check: true
       mode: changed
+      silencers: true
   shell:
     uses: ./.github/workflows/shell-lint.yml
     with:
@@ -45,6 +47,7 @@ jobs:
     with:
       format-check: true
       no-inline-config: true   # the opt-in is tried here: ESLint takes the flag, and the fixture has no disable comment
+      silencers: true          # tried here too: the step passes the flag, and the fixture has no silencer
       working-directory: tests/fixtures/node-project
   test-docker:
     uses: ./.github/workflows/test-docker.yml
