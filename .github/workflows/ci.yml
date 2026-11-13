@@ -41,6 +41,7 @@ jobs:
     uses: ./.github/workflows/node-lint.yml
     with:
       format-check: true
+      no-inline-config: true   # the opt-in is tried here: ESLint takes the flag, and the fixture has no disable comment
       working-directory: tests/fixtures/node-project
   test-docker:
     uses: ./.github/workflows/test-docker.yml

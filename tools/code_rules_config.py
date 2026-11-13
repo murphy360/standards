@@ -55,7 +55,7 @@ STANDARD_ALONE = [
     "lint.exclude=[]",
 ]
 HIDDEN = (
-    "the project's ruff config hides this finding, and a per-file ignore (or "
+    "the project's ruff config hid this finding, and a per-file ignore (or "
     "`lint.exclude`) cannot switch a standard rule off"
 )
 CONFIG_NAMES = (".ruff.toml", "ruff.toml", "pyproject.toml")  # ruff's order
@@ -67,7 +67,8 @@ JS_PIECE_RE = re.compile(
     r"""//[^\n]*|/\*.*?\*/|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`""",
     re.DOTALL,
 )
-DISABLE_RE = re.compile(r"(?://|/\*)[\s*]*eslint-disable(?:-next-line|-line)?(?![\w-])")
+# As ESLint reads a directive: the first word of the comment, then a space or its end.
+DISABLE_RE = re.compile(r"(?://|/\*)\s*eslint-disable(?:-next-line|-line)?(?=\s|\*/|$)")
 INLINE_HELP = (
     "with --eslint: an `eslint-disable` comment hides nothing and is a problem"
 )

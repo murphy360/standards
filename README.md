@@ -62,6 +62,12 @@ not name the commit.
 - **No `# noqa`.** ruff runs with `--ignore-noqa`, so a `# noqa` hides nothing, and a `# noqa` or `# ruff: noqa`
   comment is a problem of its own. A setting a project really needs goes in its ruff config, with its reason beside
   it.
+- **What a project's own config may change.** Its ruff config may add rules of its own, set the line length with a
+  reason beside it, and exclude files. Every tracked Python file ruff does not check is then printed by name on
+  every run, and the last line counts them. The config may not switch a standard rule off. A standard finding under
+  `per-file-ignores` or `lint.exclude` is reported like any other, and an `extend-per-file-ignores` entry that names
+  a standard rule is a problem of its own. For ESLint, `no-inline-config: true` on `node-lint` does the same to an
+  `eslint-disable` comment: it hides nothing and is a problem, as a `# noqa` is. It is off by default in v2.
 - **Each finding says how to fix it.** A file that fails is followed by one line per finding: path, line and column,
   the rule, the linter's message, and a one-sentence fix. At most 50 are shown.
 - **A project with debt.** `mode: changed` checks every file a change touches: a changed file must be clean, a file
