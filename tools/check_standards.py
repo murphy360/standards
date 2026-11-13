@@ -17,14 +17,17 @@ It checks:
   ``murphy360/standards`` at a version tag are allowed.
 * **CLAUDE.md** exists at the root (from the standards' template).
 
-Two more checks exist but default off, so a project already pinned at ``@v2`` sees no
-new failure until it turns one on (``--require-pr-template``, ``--require-pre-commit``;
-the ``standards-check`` workflow's matching inputs, added in v2.1.0):
+Three more checks exist but default off, so a project already pinned at ``@v2`` sees no
+new failure until it turns one on (``--require-pr-template``, ``--require-pre-commit``,
+``--require-ticket-template``; the ``standards-check`` workflow has a matching input
+for each):
 
 * **pull request template**: ``.github/pull_request_template.md`` exists (from
   ``templates/pull_request_template.md``).
 * **pre-commit config**: ``.pre-commit-config.yaml`` exists at the root (from
   ``templates/pre-commit-config.yaml``).
+* **ticket template**: ``.github/ISSUE_TEMPLATE`` holds an issue template, ``*.md``
+  or ``*.yml`` (from ``templates/ISSUE_TEMPLATE/ticket.md``).
 
 Standard library only.
 """
@@ -138,11 +141,27 @@ def has_pr_template(files: list[str]) -> bool:
     return False
 
 
+def has_ticket_template(files: list[str]) -> bool:
+    """Whether an issue template exists where GitHub looks: ``.github/ISSUE_TEMPLATE``.
+
+    A Markdown template (``*.md``) or an issue form (``*.yml``). GitHub reads the names
+    without regard to case. ``config.yml`` sets up the chooser and is not a template.
+    """
+    for f in files:
+        path = Path(f.lower())
+        if path.parent.as_posix() != ".github/issue_template":
+            continue
+        if path.suffix in (".md", ".yml") and path.name != "config.yml":
+            return True
+    return False
+
+
 def check(
     root: Path,
     *,
     require_pr_template: bool = False,
     require_pre_commit: bool = False,
+    require_ticket_template: bool = False,
 ) -> list[str]:
     files = tracked(root)
     problems = []
@@ -174,6 +193,11 @@ def check(
             ".pre-commit-config.yaml is missing "
             "(copy templates/pre-commit-config.yaml from murphy360/standards)"
         )
+    if require_ticket_template and not has_ticket_template(files):
+        problems.append(
+            ".github/ISSUE_TEMPLATE has no ticket template "
+            "(copy templates/ISSUE_TEMPLATE/ticket.md from murphy360/standards)"
+        )
     return problems
 
 
@@ -190,11 +214,17 @@ def main(argv=None) -> int:
         action="store_true",
         help="also require .pre-commit-config.yaml (opt-in, added in v2.1.0)",
     )
+    ap.add_argument(
+        "--require-ticket-template",
+        action="store_true",
+        help="also require an issue template in .github/ISSUE_TEMPLATE (opt-in)",
+    )
     a = ap.parse_args(argv)
     problems = check(
         Path(a.root).resolve(),
         require_pr_template=a.require_pr_template,
         require_pre_commit=a.require_pre_commit,
+        require_ticket_template=a.require_ticket_template,
     )
     for p in problems:
         print(p)

@@ -16,7 +16,7 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `.github/workflows/test-docker.yml` | builds the project's image and runs its tests inside it |
 | `.github/workflows/image.yml` | multi-arch image (amd64 and arm64 on native runners) pushed to ghcr.io as one manifest list |
 | `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix; `--eslint` adds the project's ESLint and `--prettier` adds `prettier --check` |
-| `tools/check_standards.py` | the checks `standards-check` runs; two more (`--require-pr-template`, `--require-pre-commit`) are opt-in |
+| `tools/check_standards.py` | the checks `standards-check` runs; three more (`--require-pr-template`, `--require-pre-commit`, `--require-ticket-template`) are opt-in |
 | `tools/agent_app.py` | gives each agent its own GitHub identity (a GitHub App): the link that creates it, a one-hour token, the commit author lines |
 | `tools/repo-settings.sh` | applies a repository's settings and its branch ruleset (below), and turns on GitHub's secret scanning and push protection where GitHub offers them; `--dry-run` prints what it would send |
 | `tools/fleet.py` | the fleet report: one row per repository, with the version of the standard it follows and what it lacks; `--run-tools <ref>` is the rehearsal before a release ("The fleet report", below) |
@@ -25,6 +25,8 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `templates/dependabot.yml` | Dependabot for actions, pip, docker and npm, weekly and grouped |
 | `templates/CLAUDE.md` | how an agent session works in a project: worktrees, Docker tests, the definition of done |
 | `templates/pull_request_template.md` | the pull request body from "Definition of done" |
+| `templates/ISSUE_TEMPLATE/ticket.md` | the ticket, an implementer's whole brief: the problem or the owner's direction, what to build, the acceptance checklist, "For the implementer", what is out of scope, the decisions the owner reserves |
+| `templates/ISSUE_TEMPLATE/config.yml` | keeps the blank issue beside the ticket template, for a quick note |
 | `templates/pre-commit-config.yaml` | ruff, ruff format, shellcheck, actionlint and gitleaks, pinned, so a finding is caught before the push and a secret before the commit |
 | `templates/rulesets/main.json` | the branch ruleset `tools/repo-settings.sh` applies: pull request required, linear history, no force push, the `result` job required; the owner can merge a pull request past a failed check, and nobody can push to main directly |
 | `templates/rulesets/version-tags.json` | the tag ruleset `tools/repo-settings.sh` applies: only the owner can create, move or delete a `v*` tag |
@@ -78,6 +80,11 @@ not name the commit.
   Turn on Dependabot alerts and security updates in each repository's settings (`tools/repo-settings.sh` does this).
 - **Agents work the same way everywhere.** `CLAUDE.md` from the template: draft until green, ready once, no
   `git stash` across worktrees, never reset onto a moved base.
+- **Work arrives as a ticket, in the milestone's RUN ORDER.** The ticket is the implementer's whole brief, so
+  every ticket has the sections of `templates/ISSUE_TEMPLATE/ticket.md`. A milestone's description carries a
+  numbered RUN ORDER of its tickets. A ticket assigned to the owner is the owner's. An agent takes the first open
+  ticket in the order that is not. Where a decision the owner reserved is unclear, the agent asks in one comment
+  and takes the next ticket. It never guesses.
 - **Parallel agent work does not queue or collide.** `templates/ci.yml` runs one pipeline per ref: a pull request's
   superseded run is cancelled, so a second push never waits behind the first, and a push to main always finishes.
   Every job carries a `timeout-minutes` (a job calling a reusable workflow cannot set its own, so the reusable
@@ -129,6 +136,9 @@ murphy360/template-python`, which already holds the steps below. An existing pro
     on, Dependabot security updates on, secret scanning and push protection on where GitHub offers them, and the
     branch and tag rulesets (`templates/rulesets/main.json`,
     `templates/rulesets/version-tags.json`) applied to the repository.
+11. Copy `templates/ISSUE_TEMPLATE/` to `.github/ISSUE_TEMPLATE/` (`ticket.md` and `config.yml`), then set
+    `check-ticket-template: true` on `standards-check`. Give each milestone a RUN ORDER ("Tickets and milestones",
+    below).
 
 A JavaScript or TypeScript project calls `node-lint` instead of `python-lint`, or as a job of its own. Copy
 `templates/eslint.config.mjs` to `eslint.config.mjs`. Add `eslint`, `@eslint/js`, `typescript-eslint` and `prettier`
@@ -138,6 +148,36 @@ apply, and `format-check: true` runs `prettier --check` on the same files. See w
 
 A project that still has a `code_rules_baseline.json` from `v1.0.0` can delete it: the tool no longer reads it, and
 says so in a note.
+
+### Tickets and milestones
+
+GitHub reads issue templates from `.github/ISSUE_TEMPLATE` on the default branch (its documentation, read
+2026-11-13). A Markdown template needs `name` and `about` in its front matter. The standard's template sets
+nothing else: no label and no assignee, because a project may not have them. Once the copy is merged, a new issue
+offers "Ticket" and a blank issue. The blank one stays for the owner's quick notes (`config.yml`).
+
+The ticket keeps every section, with "none" where one has nothing to say. "Acceptance" is the checklist someone
+else verifies. "Done", under "For the implementer", says where the work stops: what the one pull request holds,
+and what is left to the owner. "Owner decision" lists what the owner reserves. With "none" there, nothing is
+reserved.
+
+GitHub has no template for a milestone, so the description is written by hand in this shape:
+
+```text
+<one or two sentences: what this milestone is for, and where it came from>
+
+RUN ORDER
+
+1. #<number> <title>
+2. #<number> <title>
+3. #<number> <title>
+
+Tickets assigned to the owner are the owner's. An agent takes the first open ticket that is not.
+```
+
+An agent takes its work from the order, so a ticket that is not in it is not taken: a new ticket gets its line
+when it is filed. `gh` has no milestone command, so the description is set through the API:
+`gh api -X PATCH repos/<owner>/<repo>/milestones/<number> -F description=@milestone.txt`.
 
 ### The rulesets' bypass actor
 
