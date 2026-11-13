@@ -1,7 +1,8 @@
 # Copy to .pre-commit-config.yaml at the repository root. Every hook pinned to a commit SHA, its version in a
 # comment, at the pins the workflows use: ruff and ruff format at python-lint.yml's (0.6.9); shellcheck at
 # v0.11.0 (shell-lint.yml's own default is v0.10.0; a project that wants that version instead changes the rev
-# below to shellcheck-py's v0.10.0.1); actionlint at actionlint.yml's (1.7.12).
+# below to shellcheck-py's v0.10.0.1); actionlint at actionlint.yml's (1.7.12); gitleaks at secret-scan.yml's
+# (8.30.1), built from source at that commit, so a staged secret stops the commit.
 #
 #   pip install pre-commit && pre-commit install   # once per checkout
 #   pre-commit run --all-files                     # every hook, on every file
@@ -28,3 +29,7 @@ repos:
     rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # v1.7.12
     hooks:
       - id: actionlint-docker
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e  # v8.30.1
+    hooks:
+      - id: gitleaks
