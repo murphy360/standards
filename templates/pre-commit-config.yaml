@@ -1,11 +1,11 @@
 # Copy to .pre-commit-config.yaml at the repository root. Every hook pinned to a commit SHA, its version in a
 # comment, at the pins the workflows use: ruff and ruff format at python-lint.yml's (0.6.9); shellcheck at
-# v0.11.0 (shell-lint.yml's own default is v0.10.0; a project that wants that version instead changes the rev
-# below to shellcheck-py's v0.10.0.1); actionlint at actionlint.yml's (1.7.12); gitleaks at secret-scan.yml's
-# (8.30.1), built from source at that commit, so a staged secret stops the commit.
+# shell-lint.yml's (0.11.0); actionlint at actionlint.yml's (1.7.12); gitleaks at secret-scan.yml's (8.30.1), built
+# from source at that commit, so a staged secret stops the commit; and the code rules python-lint runs, from
+# murphy360/standards itself, so that what passes here passes CI.
 #
 #   pip install pre-commit && pre-commit install   # once per checkout
-#   pre-commit run --all-files                     # every hook, on every file
+#   pre-commit run --all-files                     # every hook, on every file: the one command before a push
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # v5.0.0
@@ -21,6 +21,14 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+  # The code rules, as CI runs them: ruff with the standard complexity limits, no `# noqa`, the file-size limit and
+  # the format, on every tracked file. pre-commit builds the hook with its own pinned ruff: nothing to install.
+  # The rev follows the standard's release the project's CI calls; move it when the standard releases.
+  - repo: https://github.com/murphy360/standards
+    rev: c02ef2e21b32492b4c179942d65b041fbc6665a8  # v2.2.0's code rules, with the hook (pull request #45)
+    hooks:
+      - id: code-rules
+      # - id: code-rules-node  # a JavaScript or TypeScript project: what node-lint runs (after npm ci)
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: 745eface02aef23e168a8afb6b5737818efbea95  # v0.11.0.1 (shellcheck 0.11.0)
     hooks:

@@ -42,7 +42,8 @@ def project_files() -> dict[str, str]:
         f"    if value == {i}:\n        count += {i}\n" for i in range(1, 16)
     )
     return {
-        "tangled.py": f"def tangled(value):\n    count = 0\n{branches}    return count\n",
+        "tangled.py": "def tangled(value):\n    count = 0\n"
+        f"{branches}    return count\n",
         "hidden.py": "VALUE = 1  # noqa: E501\n",
         "long.py": "".join(f"LINE_{i} = {i}\n" for i in range(801)),
     }
@@ -69,7 +70,8 @@ def write_project(root: Path, extra: dict[str, str] | None = None) -> None:
 
 def hook_config(repo: Path, rev: str) -> str:
     """A project's pre-commit config naming the code-rules hook at one commit."""
-    return f"repos:\n  - repo: {repo}\n    rev: {rev}\n    hooks:\n      - id: code-rules\n"
+    hooks = "    hooks:\n      - id: code-rules\n"
+    return f"repos:\n  - repo: {repo}\n    rev: {rev}\n{hooks}"
 
 
 def main() -> int:
