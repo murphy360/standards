@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools" / "repo-settings.sh"
 RULESET = ROOT / "templates" / "rulesets" / "main.json"
+TAG_RULESET = ROOT / "templates" / "rulesets" / "version-tags.json"
 PRE_COMMIT = ROOT / "templates" / "pre-commit-config.yaml"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
@@ -36,6 +37,11 @@ def test_dry_run_plans_every_call_without_invoking_gh():
     assert "repos/murphy360/standards/automated-security-fixes" in out
     assert "DRY RUN: gh api --method POST repos/murphy360/standards/rulesets" in out
     assert '"name": "main"' in out
+    assert '"name": "version-tags"' in out
+    assert (
+        out.count("DRY RUN: gh api --method POST repos/murphy360/standards/rulesets")
+        == 2
+    )
     assert "Done (dry run: nothing was changed)" in out
 
 
@@ -55,9 +61,23 @@ def test_a_custom_ruleset_names_itself_in_the_plan(tmp_path):
     assert res.returncode == 0, res.stderr
     assert "Ruleset 'custom-ruleset'" in res.stdout
     assert '"name": "custom-ruleset"' in res.stdout
+    assert "version-tags" not in res.stdout  # --ruleset replaces the defaults
 
 
-# templates/rulesets/main.json: the ticket's four rules, the owner can bypass
+def test_ruleset_can_be_given_more_than_once(tmp_path):
+    paths = []
+    for name in ("first", "second"):
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps({"name": name, "rules": []}))
+        paths += ["--ruleset", str(path)]
+    res = run("owner/repo", "--dry-run", *paths)
+    assert res.returncode == 0, res.stderr
+    assert "Ruleset 'first'" in res.stdout
+    assert "Ruleset 'second'" in res.stdout
+
+
+# templates/rulesets/main.json: the ticket's four rules; the owner's bypass works
+# only through a pull request, so a direct push to main is refused for everyone
 
 
 def test_the_ruleset_template_has_the_rules_the_ticket_names():
@@ -76,8 +96,25 @@ def test_the_ruleset_template_has_the_rules_the_ticket_names():
     bypass = data["bypass_actors"]
     assert len(bypass) == 1
     assert bypass[0]["actor_type"] == "User"  # OrganizationAdmin: not a personal repo
-    assert bypass[0]["bypass_mode"] == "always"
+    assert bypass[0]["bypass_mode"] == "pull_request"
     assert isinstance(bypass[0]["actor_id"], int)
+
+
+# templates/rulesets/version-tags.json: only the owner makes, moves or deletes a v* tag
+
+
+def test_the_tag_ruleset_guards_every_version_tag():
+    data = json.loads(TAG_RULESET.read_text())
+    assert data["target"] == "tag"
+    assert data["enforcement"] == "active"
+    assert data["conditions"]["ref_name"]["include"] == ["refs/tags/v*"]
+    types = {r["type"] for r in data["rules"]}
+    assert types == {"creation", "update", "deletion", "non_fast_forward"}
+    bypass = data["bypass_actors"]
+    owner = json.loads(RULESET.read_text())["bypass_actors"][0]["actor_id"]
+    assert bypass == [
+        {"actor_id": owner, "actor_type": "User", "bypass_mode": "always"}
+    ]
 
 
 # templates/pre-commit-config.yaml: every hook pinned to a commit SHA

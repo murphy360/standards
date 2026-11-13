@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 # Applies the repository settings every murphy360 project keeps: squash merge only, auto-merge and "Update branch"
-# on, Dependabot security updates on, and the branch ruleset (templates/rulesets/main.json): pull request required,
-# linear history, no force push, the "result" job required, the owner can bypass.
+# on, Dependabot security updates on, and two rulesets:
+#   templates/rulesets/main.json: pull request required, linear history, no force push, the "result" job required.
+#     The owner can merge a pull request past a failed check, but a direct push to main is refused for everyone.
+#   templates/rulesets/version-tags.json: only the owner can create, move or delete a v* tag.
 #
-# The ruleset's bypass actor is a User (murphy360's numeric GitHub id), not a RepositoryRole: these are personal
+# The bypass actor is a User (murphy360's numeric GitHub id), not a RepositoryRole: these are personal
 # repositories, and GitHub's own schema says "OrganizationAdmin is not applicable for personal repositories".
 #
-#   tools/repo-settings.sh <owner>/<repo> [--dry-run] [--ruleset <path>]
+#   tools/repo-settings.sh <owner>/<repo> [--dry-run] [--ruleset <path>]...
 #
-# Needs `gh`, authenticated with admin rights on the target repository. `--dry-run` prints what would be sent,
-# without calling the API.
+# `--ruleset` replaces the two default rulesets; give it more than once to apply several. Needs `gh`, authenticated
+# with admin rights on the target repository. `--dry-run` prints what would be sent, without calling the API.
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 <owner>/<repo> [--dry-run] [--ruleset <path>]" >&2
+  echo "Usage: $0 <owner>/<repo> [--dry-run] [--ruleset <path>]..." >&2
   exit 1
 }
 
@@ -23,7 +25,7 @@ shift
 
 dry_run=0
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ruleset_path="$script_dir/../templates/rulesets/main.json"
+ruleset_paths=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -33,7 +35,7 @@ while [ $# -gt 0 ]; do
       ;;
     --ruleset)
       [ $# -ge 2 ] || usage
-      ruleset_path="$2"
+      ruleset_paths+=("$2")
       shift 2
       ;;
     *)
@@ -47,10 +49,19 @@ case "$repo" in
   *) usage ;;
 esac
 
-[ -f "$ruleset_path" ] || {
-  echo "ruleset file not found: $ruleset_path" >&2
-  exit 1
-}
+if [ "${#ruleset_paths[@]}" -eq 0 ]; then
+  ruleset_paths=(
+    "$script_dir/../templates/rulesets/main.json"
+    "$script_dir/../templates/rulesets/version-tags.json"
+  )
+fi
+
+for ruleset_path in "${ruleset_paths[@]}"; do
+  [ -f "$ruleset_path" ] || {
+    echo "ruleset file not found: $ruleset_path" >&2
+    exit 1
+  }
+done
 
 # api METHOD PATH [JSON_BODY]: calls `gh api`, or prints what it would send with --dry-run.
 api() {
@@ -82,23 +93,30 @@ api PUT "repos/$repo/vulnerability-alerts"
 echo "Dependabot: automated security fixes on"
 api PUT "repos/$repo/automated-security-fixes"
 
-ruleset_name="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['name'])" "$ruleset_path")"
-ruleset_body="$(cat "$ruleset_path")"
-echo "Ruleset '$ruleset_name' from $ruleset_path"
+# apply_ruleset PATH: creates the ruleset, or replaces the one of the same name.
+apply_ruleset() {
+  local path="$1" name body existing_id=""
+  name="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['name'])" "$path")"
+  body="$(cat "$path")"
+  echo "Ruleset '$name' from $path"
 
-existing_id=""
-if [ "$dry_run" -eq 0 ]; then
-  existing_id="$(
-    gh api "repos/$repo/rulesets" \
-      --jq ".[] | select(.name == \"$ruleset_name\") | .id" 2>/dev/null || true
-  )"
-fi
+  if [ "$dry_run" -eq 0 ]; then
+    existing_id="$(
+      gh api "repos/$repo/rulesets" \
+        --jq ".[] | select(.name == \"$name\") | .id" 2>/dev/null || true
+    )"
+  fi
 
-if [ -n "$existing_id" ]; then
-  api PUT "repos/$repo/rulesets/$existing_id" "$ruleset_body"
-else
-  api POST "repos/$repo/rulesets" "$ruleset_body"
-fi
+  if [ -n "$existing_id" ]; then
+    api PUT "repos/$repo/rulesets/$existing_id" "$body"
+  else
+    api POST "repos/$repo/rulesets" "$body"
+  fi
+}
+
+for ruleset_path in "${ruleset_paths[@]}"; do
+  apply_ruleset "$ruleset_path"
+done
 
 if [ "$dry_run" -eq 1 ]; then
   echo "Done (dry run: nothing was changed)"
