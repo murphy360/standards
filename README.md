@@ -23,7 +23,8 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `templates/CLAUDE.md` | how an agent session works in a project: worktrees, Docker tests, the definition of done |
 | `templates/pull_request_template.md` | the pull request body from "Definition of done" |
 | `templates/pre-commit-config.yaml` | ruff, ruff format, shellcheck and actionlint, pinned, so a finding is caught before the push |
-| `templates/rulesets/main.json` | the branch ruleset `tools/repo-settings.sh` applies: pull request required, linear history, no force push, the `result` job required, the owner can bypass |
+| `templates/rulesets/main.json` | the branch ruleset `tools/repo-settings.sh` applies: pull request required, linear history, no force push, the `result` job required; the owner can merge a pull request past a failed check, and nobody can push to main directly |
+| `templates/rulesets/version-tags.json` | the tag ruleset `tools/repo-settings.sh` applies: only the owner can create, move or delete a `v*` tag |
 
 The check workflows above (standards-check, python-lint, node-lint, shell-lint, actionlint) take `runs-on`: GitHub's
 `ubuntu-latest` by default, or a JSON list of labels for a self-hosted runner (`'["ci", "X64"]'`). A private
@@ -99,8 +100,8 @@ murphy360/template-python`, which already holds the steps below. An existing pro
    pull request, and set `format-only: true` on that run (for example from a `format-only` label): it proves that
    the pull request changes only the layout of Python files.
 10. `tools/repo-settings.sh <owner>/<repo>` (`--dry-run` first): squash merge only, auto-merge and "Update branch"
-    on, Dependabot security updates on, and the branch ruleset (`templates/rulesets/main.json`) applied to the
-    repository.
+    on, Dependabot security updates on, and the branch and tag rulesets (`templates/rulesets/main.json`,
+    `templates/rulesets/version-tags.json`) applied to the repository.
 
 A JavaScript or TypeScript project calls `node-lint` instead of `python-lint`, or as a job of its own. Copy
 `templates/eslint.config.mjs` to `eslint.config.mjs`. Add `eslint`, `@eslint/js`, `typescript-eslint` and `prettier`
@@ -111,12 +112,17 @@ apply, and `format-check: true` runs `prettier --check` on the same files. See w
 A project that still has a `code_rules_baseline.json` from `v1.0.0` can delete it: the tool no longer reads it, and
 says so in a note.
 
-### The ruleset's bypass actor
+### The rulesets' bypass actor
 
-`templates/rulesets/main.json` names the owner as an `actor_type: "User"` bypass actor by numeric GitHub id, not a
-`RepositoryRole`: GitHub's own schema says `OrganizationAdmin` does not apply to a personal repository, and every
-murphy360 project is one. A project under a different owner changes `actor_id` to that owner's numeric id
+Both rulesets name the owner as an `actor_type: "User"` bypass actor by numeric GitHub id, not a `RepositoryRole`:
+GitHub's own schema says `OrganizationAdmin` does not apply to a personal repository, and every murphy360 project is
+one. A project under a different owner changes `actor_id` in both files to that owner's numeric id
 (`curl https://api.github.com/users/<login>`, the `id` field).
+
+In `main.json` the bypass is `bypass_mode: "pull_request"`. The owner can merge a pull request whose checks failed,
+but a direct push to main is refused, from the owner's login too. In `version-tags.json` the bypass is `always`:
+the owner moves a major tag by hand when releasing. A session that signs in with the owner's login still holds
+both bypasses, so agent sessions are meant to sign in as an identity of their own, with the write role and no bypass.
 
 ### From v1 to v2
 
