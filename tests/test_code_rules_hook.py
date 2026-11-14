@@ -58,13 +58,6 @@ def hook(hook_id: str) -> dict[str, str]:
     return next(h for h in manifest_hooks() if h["id"] == hook_id)
 
 
-def ruff_pin() -> str:
-    """The ruff release the hook's environment gets: pyproject's one dependency."""
-    (dependency,) = PYPROJECT["project"]["dependencies"]
-    assert re.fullmatch(r"ruff==[\d.]+", dependency), "ruff, pinned to one release"
-    return dependency.removeprefix("ruff==")
-
-
 # the manifest: valid, and each entry is a command the package installs
 
 
@@ -98,7 +91,8 @@ def test_each_entry_is_a_console_script_of_a_module_under_tools():
         assert re.search(rf"^def {function}\(argv=None\)", source, re.MULTILINE)
 
 
-# the package: every module under tools/, with no list to keep, and the pinned ruff
+# the package: every module under tools/, with no list to keep (the pinned ruff:
+# tests/test_ruff_version.py)
 
 
 def test_the_package_holds_every_module_under_tools():
@@ -108,26 +102,6 @@ def test_the_package_holds_every_module_under_tools():
     packaged = {p for pattern in wheel["include"] for p in ROOT.glob(pattern)}
     assert packaged == set(TOOLS.rglob("*.py"))  # one in a sub-directory fails here
     assert TOOLS / "code_rules.py" in packaged
-
-
-def test_ruff_is_one_version_everywhere():
-    pin = ruff_pin()
-    for name in ("python-lint.yml", "node-lint.yml"):
-        default = re.search(
-            r'ruff-version: \{type: string, default: "([\d.]+)"',
-            (WORKFLOWS / name).read_text(),
-        )
-        assert default.group(1) == pin, name
-    for config in (TEMPLATE, OWN_CONFIG):
-        hooks_rev = re.search(
-            r"repo: https://github\.com/astral-sh/ruff-pre-commit\n"
-            r"    rev: [0-9a-f]{40}  # v([\d.]+)\n",
-            config.read_text(),
-        )
-        assert hooks_rev.group(1) == pin, config.name
-    for path in (OWN_CONFIG, WORKFLOWS / "ci.yml"):
-        named = re.findall(r"ruff==([\d.]+)", path.read_text())
-        assert named and set(named) == {pin}, path.name
 
 
 # the configs: the template names this repository at a commit, this repository
@@ -143,9 +117,12 @@ def test_this_repository_runs_the_hook_on_its_own_checkout():
     text = OWN_CONFIG.read_text()
     local = text.split("  - repo: local\n", 1)[1].split("  - repo: ", 1)[0]
     assert "      - id: code-rules\n" in local
-    assert "        entry: python3 tools/code_rules.py --all --silencers\n" in local
+    entry = "python3 tools/code_rules.py --all --silencers --project-ruff"
+    assert f"        entry: {entry}\n" in local
     assert "        language: python\n" in local  # its own environment, as the hook
-    assert f'        additional_dependencies: ["ruff=={ruff_pin()}"]\n' in local
+    assert (
+        "ruff==" not in text
+    )  # the tool installs the default: tests/test_ruff_version.py
     assert "        pass_filenames: false\n" in local
     assert f"        name: {hook('code-rules')['name']}\n" in local
     assert not STANDARDS_HOOK_RE.search(text)  # never an older commit of itself
@@ -162,27 +139,6 @@ def test_both_configs_hold_the_same_hooks_apart_from_the_code_rules():
 
     assert third_party(TEMPLATE) == third_party(OWN_CONFIG)
     assert len(third_party(TEMPLATE)) == 5
-
-
-# shellcheck: one version in the workflow and in both configs (issue #9)
-
-
-def test_shellcheck_is_one_version_in_the_workflow_and_the_configs():
-    default = re.search(
-        r'shellcheck-version: \{type: string, default: "v([\d.]+)"',
-        (WORKFLOWS / "shell-lint.yml").read_text(),
-    ).group(1)
-    for config in (TEMPLATE, OWN_CONFIG):
-        hook_pin = re.search(
-            r"repo: https://github\.com/shellcheck-py/shellcheck-py\n"
-            r"    rev: [0-9a-f]{40}  # v[\d.]+ \(shellcheck ([\d.]+)\)\n",
-            config.read_text(),
-        )
-        assert hook_pin.group(1) == default, config.name
-        assert f"shell-lint.yml's ({default})" in config.read_text()
-    readme = (ROOT / "README.md").read_text()
-    row = next(line for line in readme.splitlines() if "/shell-lint.yml` |" in line)
-    assert f"v{default}" in row
 
 
 # the documents: one command before a push, and no path inside a checkout of this

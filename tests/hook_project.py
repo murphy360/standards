@@ -13,6 +13,11 @@ project's ``pre-commit run --all-files`` would, and compares what the hook print
 what ``python3 tools/code_rules.py --all`` prints: the lines CI prints. It needs the
 network (pre-commit installs ruff into the hook's environment), so it is a CI job of
 this repository (``hook`` in ci.yml) and no pytest test.
+
+It then does the same on a project that pins its own ruff, with ``--project-ruff``:
+the release the python-lint fixture pins (``tests/fixtures/python-project``), and one
+more file, laid out as that release formats it. The default ruff would re-format it.
+The hook must say that it runs the pinned release, and must not report the file.
 """
 
 from __future__ import annotations
@@ -24,6 +29,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "tools" / "code_rules.py"
+FIXTURE = ROOT / "tests" / "fixtures" / "python-project"
+PINNED = "requirements-dev.txt"
+# An assert as ruff lays it out since its 2025 style: the message in parentheses. The
+# standard's default ruff is older and puts the condition in parentheses instead.
+NEW_STYLE = (
+    "def check(name):\n"
+    '    assert name.strip() and not name.startswith(" ") and not '
+    'name.endswith(" "), (\n'
+    '        "a name has no space around it"\n'
+    "    )\n"
+)
 FIX = "split the function into named helpers, each one step, in the same order"
 EXPECTED = (
     "all: tangled.py: 1 ruff finding(s) (C901 1)",
@@ -68,21 +84,36 @@ def write_project(root: Path, extra: dict[str, str] | None = None) -> None:
     git(root, "commit", "-q", "-m", "a project that breaks three rules")
 
 
-def hook_config(repo: Path, rev: str) -> str:
+def hook_config(repo: Path, rev: str, args: list[str] | None = None) -> str:
     """A project's pre-commit config naming the code-rules hook at one commit."""
     hooks = "    hooks:\n      - id: code-rules\n"
+    if args:
+        hooks += f"        args: [{', '.join(args)}]\n"
     return f"repos:\n  - repo: {repo}\n    rev: {rev}\n{hooks}"
 
 
-def main() -> int:
-    rev = git(ROOT, "rev-parse", "HEAD")
+def fixture_pin() -> str:
+    """The ruff release the python-lint fixture pins: newer than the default."""
+    lines = (FIXTURE / PINNED).read_text().splitlines()
+    return next(ln for ln in lines if ln.startswith("ruff==")).removeprefix("ruff==")
+
+
+def compare(
+    rev: str,
+    args: list[str],
+    extra: dict[str, str],
+    expected: tuple[str, ...],
+    absent: str = "",
+) -> list[str]:
+    """Run the hook at ``rev`` and the tool on the scratch project: what differs."""
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp) / "project"
-        write_project(project, {".pre-commit-config.yaml": hook_config(ROOT, rev)})
+        config = hook_config(ROOT, rev, args)
+        write_project(project, {".pre-commit-config.yaml": config, **extra})
         run = {"cwd": project, "capture_output": True, "text": True}
         hook = subprocess.run(["pre-commit", "run", "--all-files"], **run)
-        tool = subprocess.run([sys.executable, str(TOOL), "--all"], **run)
-    print(f"$ pre-commit run --all-files   # the hook at {rev}")
+        tool = subprocess.run([sys.executable, str(TOOL), *args], **run)
+    print(f"$ pre-commit run --all-files   # the hook at {rev}: {' '.join(args)}")
     print(hook.stdout + hook.stderr)
     problems = []
     if hook.returncode != 1 or tool.returncode != 1:
@@ -90,16 +121,32 @@ def main() -> int:
             f"the hook exited {hook.returncode} and the tool {tool.returncode}; "
             "both fail this project with 1"
         )
-    if tool.stdout.strip() not in hook.stdout:
+    if not tool.stdout.strip():
+        problems.append(f"the tool printed nothing (is ruff installed?): {tool.stderr}")
+    elif tool.stdout.strip() not in hook.stdout:
         problems.append(
-            "the hook did not print what `tools/code_rules.py --all` prints:\n"
-            + tool.stdout
+            f"the hook did not print what `tools/code_rules.py {' '.join(args)}` "
+            "prints:\n" + tool.stdout
         )
     problems += [
         f"the hook did not print: {line}"
-        for line in EXPECTED
+        for line in expected
         if line not in hook.stdout
     ]
+    if absent and absent in hook.stdout:
+        problems.append(f"the hook reported {absent}: it did not run the pinned ruff")
+    return problems
+
+
+def main() -> int:
+    rev = git(ROOT, "rev-parse", "HEAD")
+    problems = compare(rev, ["--all"], {}, EXPECTED)
+    pin = fixture_pin()
+    pinned = {PINNED: f"ruff=={pin}\n", "new_style.py": NEW_STYLE}
+    said = f"code_rules: ruff {pin} (the project's pin, {PINNED})"
+    problems += compare(
+        rev, ["--all", "--project-ruff"], pinned, (said,), "new_style.py"
+    )
     for problem in problems:
         print(f"hook_project: {problem}")
     print(

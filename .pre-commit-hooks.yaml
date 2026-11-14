@@ -1,10 +1,12 @@
 # The code rules as pre-commit hooks, so that a project runs before a push what CI runs after it. A project names
 # this repository in its .pre-commit-config.yaml at a commit SHA (templates/pre-commit-config.yaml). pre-commit
-# installs this repository into the hook's own environment (pyproject.toml): the modules under tools/ and the ruff
-# release python-lint.yml uses. Nothing is installed on the machine, and a ruff it already has is not used.
+# installs this repository into the hook's own environment (pyproject.toml): the modules under tools/ and the
+# standard's default ruff. Nothing is installed on the machine, and a ruff it already has is not used.
 # Every tracked file is checked on every run, as CI checks it; the names of the staged files are not passed.
-# A project changes `args` only to say what its lint job's inputs say: `--paths`, `--no-format`, `--silencers`, or
-# no `--all` for mode changed.
+# A project changes `args` only to say what its lint job's inputs say: `--paths`, `--no-format`, `--silencers`,
+# `--project-ruff`, `--ruff-version <version>`, or no `--all` for mode changed. With `--project-ruff` the hook runs
+# the ruff the project pins (`ruff==<version>` in its requirements): it installs that release into its own
+# environment on the first run, so a pull request that moves the pin moves the hook with CI.
 - id: code-rules
   name: code rules (ruff, complexity, no noqa, file size, format)
   description: What python-lint runs. Every file is clean; each finding is printed with its line, rule and fix.

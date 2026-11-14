@@ -700,11 +700,10 @@ def test_without_ruff_the_rehearsal_stops_and_names_the_docker_command(
     assert "python tools/fleet.py --run-tools v2.3.0" in captured.err
 
 
-def test_the_docker_command_pins_the_ruff_python_lint_pins():
-    workflow = (ROOT / ".github" / "workflows" / "python-lint.yml").read_text()
-    pin = re.search(r'ruff-version: \{type: string, default: "([\d.]+)"', workflow)
-    assert fleet_rehearsal.RUFF == pin.group(1)
-    assert f"ruff=={pin.group(1)}" in fleet_rehearsal.docker_hint("v2")
+def test_the_docker_command_installs_the_default_ruff_and_names_no_version():
+    hint = fleet_rehearsal.docker_hint("v2")
+    assert "python tools/ruff_version.py --install &&" in hint
+    assert "ruff==" not in hint  # the default is written once, in pyproject.toml
     readme = (ROOT / "README.md").read_text()
     for line in fleet_rehearsal.docker_hint("<ref>").splitlines()[3:]:
         assert line.strip() in readme  # README documents the same command

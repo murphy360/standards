@@ -49,10 +49,6 @@ jobs:
       run:
         working-directory: ${{ inputs.working-directory }}
     steps:
-      - name: Take ownership of the previous job's files (a self-hosted runner)
-        if: runner.environment == 'self-hosted'
-        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       # The tools come from the commit this workflow file was called at, so a workflow and its tools never disagree.
       # job.workflow_sha is that commit: what @v2 or @<sha> resolved to in a project, and the commit under test in
       # this repository's own ci.yml. It is read through toJSON because actionlint 1.7.12 does not know the property
@@ -80,6 +76,12 @@ jobs:
           git -C standards fetch -q --no-tags --depth=1 "$SERVER_URL/$repository" "$ref"
           git -C standards checkout -q --detach FETCH_HEAD
           echo "standards tools: $repository@$(git -C standards rev-parse HEAD) (${WORKFLOW_REF:-standards-ref $ref})"
+      - name: Take ownership of the previous job's files (a self-hosted runner)
+        if: runner.environment == 'self-hosted'
+        run: |
+          image="$(sh "$RUNNER_TEMP/standards/tools/image-ref.sh" alpine)"
+          docker run --rm -v "$GITHUB_WORKSPACE:/w" "$image" chown -R "$(id -u):$(id -g)" /w
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: ${{ inputs.python-version }}

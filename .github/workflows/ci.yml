@@ -5,6 +5,8 @@
 # are turned on here to prove the opt-in flags work, since this repository now carries both files itself.
 # `node`, `test-docker` and `image` run the other three workflows on the small projects in tests/fixtures, so that
 # every workflow this repository ships runs here before a tag moves. `image` only builds: nothing is published here.
+# `lint-pinned` runs python-lint on the fixture that pins its own, newer ruff (project-ruff).
+# No ruff version is written here: tools/ruff_version.py reads the default from pyproject.toml.
 # `types` runs type-check on this repository's own tools, `types-python` on a small project with a dependency to
 # install, and `types-node` runs the TypeScript half on the Node fixture.
 # `secret-scan` runs on the commits of the change and `secret-scan-history` on the whole history, so both are tried.
@@ -30,6 +32,16 @@ jobs:
       format-check: true
       mode: changed
       silencers: true
+  # A project that pins its own ruff: the fixture's requirements-dev.txt names a newer release than the default.
+  # The log prints the release and the file that names it, and with project-ruff the tool runs no other release:
+  # it asks the ruff it found for its version first. The `hook` job proves the same on a file that only the
+  # pinned release leaves as it is.
+  lint-pinned:
+    uses: ./.github/workflows/python-lint.yml
+    with:
+      format-check: true
+      project-ruff: true
+      working-directory: tests/fixtures/python-project
   shell:
     uses: ./.github/workflows/shell-lint.yml
     with:
@@ -44,6 +56,8 @@ jobs:
       check-ticket-template: true   # this repository files its tickets from its own template
       # check-templates stays off: this repository's AGENTS.md is its own text, not a copy of templates/AGENTS.md.
       # tests/test_templates.py runs this workflow's step with it on, against a project made from the templates.
+      # check-ruff-version stays off too: this repository holds two ruff versions on purpose, the default and the
+      # newer one its python-lint fixture pins. tests/test_ruff_version.py runs the step with it on.
   node:
     uses: ./.github/workflows/node-lint.yml
     with:
@@ -93,12 +107,14 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
-      - run: pip install pytest "ruff==0.6.9"
+      - run: pip install pytest && python3 tools/ruff_version.py --install
       - name: The gitleaks image, so the secret-scan test runs the real scan (it never pulls, and skips without it)
-        run: docker pull "$(grep -o 'ghcr.io/gitleaks/gitleaks:[^ ]*' .github/workflows/secret-scan.yml)"
+        run: docker pull "$(sh tools/image-ref.sh gitleaks)"
       - run: python3 -m pytest -q tests
   # The code-rules hook, built by pre-commit from this commit as a project would build it, on a scratch project that
-  # breaks three rules: it must print what tools/code_rules.py prints. It needs the network, so it is no pytest test.
+  # breaks three rules: it must print what tools/code_rules.py prints. Then again on a project that pins a newer
+  # ruff, with --project-ruff: the hook and the tool must run that release, which leaves alone a file the default
+  # would re-format. It needs the network, so it is no pytest test.
   hook:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -107,12 +123,12 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
-      - run: pip install "pre-commit==4.7.0" "ruff==0.6.9"
+      - run: pip install "pre-commit==4.7.0" && python3 tools/ruff_version.py --install
       - run: python3 tests/hook_project.py
   result:
     name: result
     if: always()
-    needs: [lint, lint-changed, shell, workflows, standards, node, test-docker, image, types, types-python, types-node, secret-scan, secret-scan-history, tests, hook]
+    needs: [lint, lint-changed, lint-pinned, shell, workflows, standards, node, test-docker, image, types, types-python, types-node, secret-scan, secret-scan-history, tests, hook]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

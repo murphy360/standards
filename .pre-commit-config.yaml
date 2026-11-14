@@ -1,7 +1,8 @@
 # From templates/pre-commit-config.yaml. Every hook pinned to a commit SHA, its version in a comment, at the pins
-# the workflows use: ruff and ruff format at python-lint.yml's (0.6.9); shellcheck at shell-lint.yml's (0.11.0);
-# actionlint at actionlint.yml's (1.7.12); gitleaks at secret-scan.yml's (8.30.1), built from source at that
-# commit, so a staged secret stops the commit. One difference from the template: the code rules are a local hook.
+# the workflows use: ruff and ruff format at the standard's default ruff (pyproject.toml); shellcheck at
+# shell-lint.yml's (0.11.0); actionlint at actionlint.yml's (1.7.12); gitleaks at secret-scan.yml's (8.30.1), built
+# from source at that commit, so a staged secret stops the commit. One difference from the template: the code rules
+# are a local hook.
 #
 #   pip install pre-commit && pre-commit install   # once per checkout
 #   pre-commit run --all-files                     # every hook, on every file: the one command before a push
@@ -22,14 +23,15 @@ repos:
       - id: ruff-format
   # The code rules of this checkout, not of a commit this file names: this repository's CI runs the tools of the
   # pull request, so its hook does too. A project takes the hook from this repository at a commit SHA instead
-  # (templates/pre-commit-config.yaml). ruff is the pin in pyproject.toml; a test keeps the two the same.
+  # (templates/pre-commit-config.yaml). No ruff is named here: with --project-ruff the tool runs the release this
+  # project pins, and it pins none, so that is the standard's default (pyproject.toml). The tool installs it into the
+  # hook's environment on the first run.
   - repo: local
     hooks:
       - id: code-rules
         name: code rules (ruff, complexity, no noqa, file size, format)
-        entry: python3 tools/code_rules.py --all --silencers
+        entry: python3 tools/code_rules.py --all --silencers --project-ruff
         language: python
-        additional_dependencies: ["ruff==0.6.9"]
         pass_filenames: false
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: 745eface02aef23e168a8afb6b5737818efbea95  # v0.11.0.1 (shellcheck 0.11.0)

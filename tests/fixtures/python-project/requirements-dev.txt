@@ -1,0 +1,3 @@
+# The ruff this fixture is linted with: newer than the standard's default, as a project pins its own
+# (project-ruff: true). Dependabot moves it; ci.yml's lint-pinned job then shows what the new release finds.
+ruff==0.17.5

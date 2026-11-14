@@ -8,18 +8,20 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | Path | What it is |
 |---|---|
 | `.github/workflows/standards-check.yml` | Fails a project that lacks a `.github/dependabot.yml` covering its ecosystems, pins an action to anything but a commit SHA, or has no instruction file (`AGENTS.md`, or a `CLAUDE.md` alone); `check-templates: true` also fails one whose copy of the shared text of `AGENTS.md` fell behind the template, whose `CLAUDE.md` does not import the `AGENTS.md` beside it, or whose CI has no job named `result` |
-| `.github/workflows/python-lint.yml` | ruff with the project's config plus the standard complexity limits, no `# noqa`, and the file-size limit (`tools/code_rules.py`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `ruff format --check` in the same scope; `paths` limits it to some directories; `format-only: true` proves a pull request only re-formats |
+| `.github/workflows/python-lint.yml` | ruff with the project's config plus the standard complexity limits, no `# noqa`, and the file-size limit (`tools/code_rules.py`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `ruff format --check` in the same scope; `paths` limits it to some directories; `format-only: true` proves a pull request only re-formats; `project-ruff: true` lints with the ruff the project pins |
 | `.github/workflows/node-lint.yml` | ESLint with the project's config plus the standard complexity limits, and the file-size limit (`tools/code_rules.py --eslint`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `prettier --check` in the same scope; `paths` limits it to some directories. Added in v2.2.0 |
 | `.github/workflows/type-check.yml` | pyright, pinned, on a Python project (`basic` mode unless the project's pyright config sets one), or the project's own `tsc --noEmit` on a TypeScript one (`language: typescript`); `install-command` installs what the code imports, so that pyright sees it; each finding is printed with its line, rule and fix (`tools/type_check.py`). No baseline: a project with debt narrows `include` in its own config |
-| `.github/workflows/shell-lint.yml` | shellcheck on every tracked `*.sh`, pinned (v0.11.0, the version the pre-commit template pins) |
-| `.github/workflows/actionlint.yml` | actionlint on the project's workflows |
+| `.github/workflows/shell-lint.yml` | shellcheck on every tracked `*.sh`, pinned by digest (v0.11.0, the version the pre-commit template pins) |
+| `.github/workflows/actionlint.yml` | actionlint on the project's workflows, pinned by digest |
 | `.github/workflows/secret-scan.yml` | gitleaks, pinned by digest, on the commits of a pull request or a push; `full-history: true` scans every commit. A finding names the file, the line and the rule, never the secret |
 | `.github/workflows/test-docker.yml` | builds the project's image and runs its tests inside it |
 | `.github/workflows/image.yml` | multi-arch image (amd64 and arm64 on native runners) pushed to ghcr.io as one manifest list |
 | `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix; `--eslint` adds the project's ESLint and `--prettier` adds `prettier --check`; `--silencers` checks that every skip, xfail, type ignore and the like carries its reason, and counts them. CI runs it, and a project runs it as a pre-commit hook |
 | `tools/type_check.py` | the type check `type-check` runs: pyright, or the project's `tsc --noEmit` with `--language typescript`; it reads the checker's output and prints each finding the way `code_rules.py` does |
 | `.pre-commit-hooks.yaml` | the code rules as pre-commit hooks: `code-rules` is what `python-lint` runs and `code-rules-node` is what `node-lint` runs. pre-commit installs this repository (`pyproject.toml`: the modules under `tools/` and the pinned ruff) into the hook's own environment, so a project installs nothing |
-| `tools/check_standards.py` | the checks `standards-check` runs; five more (`--require-pr-template`, `--require-pre-commit`, `--require-ticket-template`, `--require-current-templates`, `--require-agent-settings`) are opt-in |
+| `tools/check_standards.py` | the checks `standards-check` runs; six more (`--require-pr-template`, `--require-pre-commit`, `--require-ticket-template`, `--require-current-templates`, `--require-agent-settings`, `--require-one-ruff-version`) are opt-in |
+| `tools/ruff_version.py` | which ruff a project is linted with: the `ruff-version` input, the project's own pin with `project-ruff: true`, or the standard's default, which is written once, in `pyproject.toml`. The lint workflows install ruff with it and `code_rules.py` imports it, so CI and the hook choose the same way |
+| `tools/images/`, `tools/image-ref.sh` | the images the workflows run (shellcheck, actionlint, gitleaks, alpine), each by tag and digest in a Dockerfile of its own, where Dependabot updates them; the script reads one for a workflow |
 | `tools/sync_templates.py` | brings a project's copy of the templates up to date: rewrites the shared text of its `AGENTS.md` (or `CLAUDE.md`) from the template and touches nothing else; `--check` changes nothing and exits 1 if something would change; `--to-agents-md` moves a project's instructions from `CLAUDE.md` to `AGENTS.md`; `--all` also copies the templates the project lacks ("Staying current", below) |
 | `tools/agent_app.py` | gives each agent its own GitHub identity (a GitHub App): the link that creates it, a one-hour token, the commit author lines |
 | `tools/repo-settings.sh` | applies a repository's settings and its branch ruleset (below), and turns on GitHub's secret scanning and push protection where GitHub offers them; `--dry-run` prints what it would send |
@@ -37,7 +39,7 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `templates/claude/guard.py` | the guard, copied to `.claude/guard.py`: it refuses `git stash`, a push to the default branch, a reset onto another commit, an admin merge, `--no-verify` and a forced push, says what to do instead, and runs `pre-commit run --all-files` before a push |
 | `templates/rulesets/main.json` | the branch ruleset `tools/repo-settings.sh` applies: pull request required, linear history, no force push, the `result` job required; the owner can merge a pull request past a failed check, and nobody can push to main directly |
 | `templates/rulesets/version-tags.json` | the tag ruleset `tools/repo-settings.sh` applies: only the owner can create, move or delete a `v*` tag |
-| `tests/fixtures/` | the three small projects (Node, Python, Docker) this repository's own CI runs `node-lint`, `type-check`, `test-docker` and `image` on, so every workflow runs here before a tag moves |
+| `tests/fixtures/` | the three small projects (Node, Python, Docker) this repository's own CI runs `node-lint`, `python-lint` (with the newer ruff the Python project pins), `type-check`, `test-docker` and `image` on, so every workflow runs here before a tag moves |
 
 The check workflows above (standards-check, python-lint, node-lint, type-check, shell-lint, actionlint, secret-scan) take `runs-on`: GitHub's
 `ubuntu-latest` by default, or a JSON list of labels for a self-hosted runner (`'["ci", "X64"]'`). A private
@@ -117,6 +119,27 @@ not name the commit.
 - **Dependencies stay current.** Every third-party action is pinned to a commit SHA with its version in a comment, and
   Dependabot updates the actions, pip, docker and npm dependencies weekly, one grouped pull request per ecosystem.
   Turn on Dependabot alerts and security updates in each repository's settings (`tools/repo-settings.sh` does this).
+- **The linters stay current the same way.** Each linter version sits where Dependabot reads it.
+  - *ESLint and Prettier* are the project's devDependencies, and its lockfile pins them.
+  - *ruff* is the project's too, with `project-ruff: true` on `python-lint` or `node-lint`. The project writes
+    `ruff==<version>` in `requirements-dev.txt`. Another `requirements*.txt`, a dependency group or an extra of
+    `pyproject.toml` counts too, and `requirements-dev.txt` is read first. Only an exact pin counts, and only in
+    the directory the lint runs in. Dependabot's pip pull request moves the pin, and CI on that pull request lints
+    with the new release: its findings show up there, alone, and not on someone's unrelated change. The run prints
+    the release and the file that names it. A project that pins none gets the standard's default, and the
+    `ruff-version` input still wins over both. `project-ruff` is off by default in v2, because a project that
+    already names a ruff in those files would change version unasked. It is the default in v3.
+  - *The standard's default ruff* is written once, in this repository's `pyproject.toml`
+    (`tools/ruff_version.py` reads it). A new default reaches every project that pins none at once, so it moves
+    only with a release that says so.
+  - *shellcheck, actionlint, gitleaks and alpine* run as container images. Each is named by tag and digest in a
+    Dockerfile of its own under `tools/images/`, which Dependabot's docker ecosystem reads. Dependabot reads no
+    image in a `run:` step and no `docker://` reference in a workflow. `shellcheck-version` and
+    `actionlint-version` still take another release, by its tag.
+  - *One ruff, locally and in CI.* With `--project-ruff` in its `args`, the `code-rules` hook runs the release the
+    project pins: it installs that release into its own environment on the first run. `check-ruff-version: true`
+    on `standards-check` fails a project whose ruff versions differ: its pins, its `ruff-pre-commit` rev, what its
+    `code-rules` hook runs and what its lint jobs run.
 - **Agents work the same way everywhere.** `AGENTS.md` from the template, the one file every agent tool reads:
   draft until green, ready once, no `git stash` across worktrees, never reset onto a moved base. It names the one
   command before a push and links here for the rules; it does not repeat the numbers CI enforces.
@@ -155,16 +178,18 @@ not name the commit.
 - **Local equals CI: one command before a push.** `pre-commit run --all-files` runs what the lint in CI runs.
   `templates/pre-commit-config.yaml` holds the `code-rules` hook (`.pre-commit-hooks.yaml`): the code rules on
   every file, with the complexity limits, the `# noqa` rule, the size limit and the format, printing the lines CI
-  prints. It also holds ruff and ruff format at the pin `python-lint.yml` uses, shellcheck at the version
+  prints. It also holds ruff and ruff format at the standard's default ruff, shellcheck at the version
   `shell-lint.yml` uses, actionlint, gitleaks, and the usual hygiene hooks (merge conflicts, large files, end of
-  file). Every hook is pinned to a commit SHA. pre-commit builds each hook's own environment, with the pinned
-  ruff in it, so nothing is installed on the machine and no second ruff can drift. The machine needs pre-commit
-  and Python 3.12 or newer.
+  file). Every hook is pinned to a commit SHA. pre-commit builds each hook's own environment, with the default
+  ruff in it, so nothing is installed on the machine and no second ruff can drift. A project that pins its own
+  ruff gives the hook `--project-ruff`, and the hook runs that release ("The linters stay current", above). The
+  machine needs pre-commit and Python 3.12 or newer.
 - **The hook's commit follows the release.** A project pins `murphy360/standards` in its pre-commit config at the
   commit of the release its CI calls, so the hook and CI hold the same rules. When the standard releases, the
   project moves that `rev` to the new release's commit; the template names it. A project whose lint job passes
-  `paths` or `working-directory`, or runs without `format-check`, or in `mode: changed`, gives the hook the same in
-  `args` (`--paths src`, `--root <directory>`, `--no-format`, or no `--all`).
+  `paths` or `working-directory`, or runs without `format-check`, or in `mode: changed`, or with `project-ruff` or
+  `ruff-version`, gives the hook the same in `args` (`--paths src`, `--root <directory>`, `--no-format`, no
+  `--all`, `--project-ruff`, `--ruff-version <version>`).
 - **A secret is stopped before the commit, and again in CI.** The gitleaks hook refuses a commit that stages a
   credential. `secret-scan` scans the commits of a pull request or a push with the same gitleaks version, so a
   commit made without the hook is stopped before it is merged. A finding names the file, the line and the rule,
@@ -218,6 +243,12 @@ murphy360/template-python`, which already holds the steps below. An existing pro
     ("The rules", above). The guard needs `python3`. A project that already has a `.claude/settings.json` adds the
     `deny` rules and the `PreToolUse` hook to its own. Then turn on `check-agent-settings: true` in
     `standards-check`'s `with:`: it requires the settings file, its guard hook, and the guard file the hook names.
+13. Pin ruff in the project, so that a new ruff arrives as one pull request of its own. Write `ruff==<version>` in
+    `requirements-dev.txt`, starting from the version the lint prints today. Set `project-ruff: true` on the lint
+    job and `args: [--all, --project-ruff]` on the `code-rules` hook, and set the `ruff-pre-commit` rev to the
+    commit of the same release. `templates/dependabot.yml` already watches pip, so Dependabot opens a pull request
+    when ruff releases: CI lints it with the new release, and the fixes go in that pull request. Turn on
+    `check-ruff-version: true` in `standards-check`'s `with:`, which fails when those places disagree.
 
 A JavaScript or TypeScript project calls `node-lint` instead of `python-lint`, or as a job of its own. Copy
 `templates/eslint.config.mjs` to `eslint.config.mjs`. Add `eslint`, `@eslint/js`, `typescript-eslint` and `prettier`
@@ -426,10 +457,10 @@ in Docker from the root of this repository:
 
 ```sh
 GH_TOKEN="$(gh auth token)" docker run --rm -e GH_TOKEN \
-  -e DEBIAN_FRONTEND=noninteractive -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
+  -e DEBIAN_FRONTEND=noninteractive -e PIP_ROOT_USER_ACTION=ignore \
   -v "$PWD:/standards:ro" -w /standards python:3.12-slim sh -c '
     apt-get -qq update && apt-get -qq install -y git gh >/dev/null &&
-    pip install -q --root-user-action=ignore ruff==0.6.9 &&
+    python tools/ruff_version.py --install &&
     git config --global --add safe.directory /standards &&
     python tools/fleet.py --run-tools <ref>'
 ```

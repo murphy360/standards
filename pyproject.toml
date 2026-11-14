@@ -2,8 +2,12 @@
 # [tool.ruff] section only for a reason, and says the reason in a comment.
 #
 # This repository is installable, so that pre-commit can build the code-rules hook (.pre-commit-hooks.yaml): it
-# installs the modules under tools/ and ruff, at the pin python-lint.yml uses, into the hook's own environment.
-# Nothing here is published to an index.
+# installs the modules under tools/ and the default ruff into the hook's own environment. Nothing here is published
+# to an index.
+#
+# `dependencies` is the one place the standard's default ruff is written. The workflows, the hook and this
+# repository's CI read it from here (tools/ruff_version.py), and Dependabot's pip watch moves it here. The
+# ruff-pre-commit rev in both pre-commit configs is the same release: a test fails otherwise and names the commit.
 [build-system]
 requires = ["hatchling==1.33.0"]
 build-backend = "hatchling.build"
@@ -12,7 +16,7 @@ build-backend = "hatchling.build"
 name = "murphy360-standards"
 version = "2.0.0"
 requires-python = ">=3.12"
-dependencies = ["ruff==0.6.9"]  # python-lint.yml's ruff-version; a test keeps the two the same
+dependencies = ["ruff==0.6.9"]
 
 [project.scripts]
 code-rules = "code_rules:main"

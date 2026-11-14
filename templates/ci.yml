@@ -22,6 +22,7 @@ jobs:
     #   check-ticket-template: true    # also requires an issue template in .github/ISSUE_TEMPLATE
     #   check-templates: true          # the shared text of AGENTS.md is the template's (tools/sync_templates.py)
     #   check-agent-settings: true     # also requires .claude/settings.json with the guard hook
+    #   check-ruff-version: true       # every ruff version the project names is the same one
   lint:
     uses: murphy360/standards/.github/workflows/python-lint.yml@v2
     with:
@@ -31,6 +32,8 @@ jobs:
       format-only: ${{ contains(github.event.pull_request.labels.*.name, 'format-only') }}
       # silencers: true  # a skip, an xfail, a type ignore, a `# pragma: no cover` and a `# shellcheck disable=`
       #                  # each carry a reason, and the last line counts them
+      # project-ruff: true  # lint with the ruff the project pins (`ruff==<version>` in requirements-dev.txt), so
+      #                     # Dependabot's pull request here is where a new ruff's findings show up
   # A JavaScript or TypeScript project uses node-lint instead of python-lint, or as a job of its own:
   # node:
   #   uses: murphy360/standards/.github/workflows/node-lint.yml@v2

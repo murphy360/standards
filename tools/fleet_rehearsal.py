@@ -10,7 +10,9 @@ fleet.py finds the adopters; this module does the rest. For each adopter it:
 2. clones the adopter into a temporary directory (``gh repo clone``, depth 1);
 3. runs the tools the way the adopter's workflows would. A repository that calls
    ``python-lint`` gets ``code_rules.py --all``, with ``--no-format`` unless it
-   sets ``format-check: true``, and with its ``paths`` and ``working-directory``.
+   sets ``format-check: true``, and with its ``paths``, ``working-directory``,
+   ``project-ruff`` and ``ruff-version``. Without the last two the ruff on PATH
+   runs, so install the standard's default (``ruff_version.py --install``).
    A repository that calls ``standards-check`` gets ``check_standards.py``, with
    the opt-in checks it turned on;
 4. prints pass or FAIL, and the last line of each tool;
@@ -39,13 +41,13 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-RUFF = "0.6.9"  # the ruff python-lint.yml pins (a test keeps the two in step)
 CHECK_FLAGS = (
     ("check-pr-template", "--require-pr-template"),
     ("check-pre-commit-config", "--require-pre-commit"),
     ("check-ticket-template", "--require-ticket-template"),
     ("check-templates", "--require-current-templates"),
     ("check-agent-settings", "--require-agent-settings"),
+    ("check-ruff-version", "--require-one-ruff-version"),
 )
 WORST = ("error", "FAIL", "debt", "pass", "-")
 
@@ -56,10 +58,10 @@ def docker_hint(ref: str) -> str:
 Run the rehearsal in Docker, from the root of this repository:
 
   GH_TOKEN="$(gh auth token)" docker run --rm -e GH_TOKEN \\
-    -e DEBIAN_FRONTEND=noninteractive -e PIP_DISABLE_PIP_VERSION_CHECK=1 \\
+    -e DEBIAN_FRONTEND=noninteractive -e PIP_ROOT_USER_ACTION=ignore \\
     -v "$PWD:/standards:ro" -w /standards python:3.12-slim sh -c '
       apt-get -qq update && apt-get -qq install -y git gh >/dev/null &&
-      pip install -q --root-user-action=ignore ruff=={RUFF} &&
+      python tools/ruff_version.py --install &&
       git config --global --add safe.directory /standards &&
       python tools/fleet.py --run-tools {ref}'"""
 
@@ -90,6 +92,10 @@ def plan(row: dict) -> list[dict]:
             paths = plain(given.get("paths")).split()
             if paths:
                 args += ["--paths", *paths]
+            if given.get("project-ruff") == "true":
+                args.append("--project-ruff")
+            if plain(given.get("ruff-version")):
+                args += ["--ruff-version", plain(given.get("ruff-version"))]
             step = {
                 "tool": "code_rules.py",
                 "args": args,
