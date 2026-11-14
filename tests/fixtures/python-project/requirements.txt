@@ -1,0 +1,2 @@
+# What the fixture imports. type-check's install-command installs it, so that pyright sees it.
+packaging==26.3

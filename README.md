@@ -10,12 +10,14 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `.github/workflows/standards-check.yml` | Fails a project that lacks a `.github/dependabot.yml` covering its ecosystems, pins an action to anything but a commit SHA, or has no instruction file (`AGENTS.md`, or a `CLAUDE.md` alone); `check-templates: true` also fails one whose copy of the shared text of `AGENTS.md` fell behind the template, whose `CLAUDE.md` does not import the `AGENTS.md` beside it, or whose CI has no job named `result` |
 | `.github/workflows/python-lint.yml` | ruff with the project's config plus the standard complexity limits, no `# noqa`, and the file-size limit (`tools/code_rules.py`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `ruff format --check` in the same scope; `paths` limits it to some directories; `format-only: true` proves a pull request only re-formats |
 | `.github/workflows/node-lint.yml` | ESLint with the project's config plus the standard complexity limits, and the file-size limit (`tools/code_rules.py --eslint`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `prettier --check` in the same scope; `paths` limits it to some directories. Added in v2.2.0 |
+| `.github/workflows/type-check.yml` | pyright, pinned, on a Python project (`basic` mode unless the project's pyright config sets one), or the project's own `tsc --noEmit` on a TypeScript one (`language: typescript`); `install-command` installs what the code imports, so that pyright sees it; each finding is printed with its line, rule and fix (`tools/type_check.py`). No baseline: a project with debt narrows `include` in its own config |
 | `.github/workflows/shell-lint.yml` | shellcheck on every tracked `*.sh`, pinned (v0.11.0, the version the pre-commit template pins) |
 | `.github/workflows/actionlint.yml` | actionlint on the project's workflows |
 | `.github/workflows/secret-scan.yml` | gitleaks, pinned by digest, on the commits of a pull request or a push; `full-history: true` scans every commit. A finding names the file, the line and the rule, never the secret |
 | `.github/workflows/test-docker.yml` | builds the project's image and runs its tests inside it |
 | `.github/workflows/image.yml` | multi-arch image (amd64 and arm64 on native runners) pushed to ghcr.io as one manifest list |
 | `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix; `--eslint` adds the project's ESLint and `--prettier` adds `prettier --check`; `--silencers` checks that every skip, xfail, type ignore and the like carries its reason, and counts them. CI runs it, and a project runs it as a pre-commit hook |
+| `tools/type_check.py` | the type check `type-check` runs: pyright, or the project's `tsc --noEmit` with `--language typescript`; it reads the checker's output and prints each finding the way `code_rules.py` does |
 | `.pre-commit-hooks.yaml` | the code rules as pre-commit hooks: `code-rules` is what `python-lint` runs and `code-rules-node` is what `node-lint` runs. pre-commit installs this repository (`pyproject.toml`: the modules under `tools/` and the pinned ruff) into the hook's own environment, so a project installs nothing |
 | `tools/check_standards.py` | the checks `standards-check` runs; five more (`--require-pr-template`, `--require-pre-commit`, `--require-ticket-template`, `--require-current-templates`, `--require-agent-settings`) are opt-in |
 | `tools/sync_templates.py` | brings a project's copy of the templates up to date: rewrites the shared text of its `AGENTS.md` (or `CLAUDE.md`) from the template and touches nothing else; `--check` changes nothing and exits 1 if something would change; `--to-agents-md` moves a project's instructions from `CLAUDE.md` to `AGENTS.md`; `--all` also copies the templates the project lacks ("Staying current", below) |
@@ -35,15 +37,15 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `templates/claude/guard.py` | the guard, copied to `.claude/guard.py`: it refuses `git stash`, a push to the default branch, a reset onto another commit, an admin merge, `--no-verify` and a forced push, says what to do instead, and runs `pre-commit run --all-files` before a push |
 | `templates/rulesets/main.json` | the branch ruleset `tools/repo-settings.sh` applies: pull request required, linear history, no force push, the `result` job required; the owner can merge a pull request past a failed check, and nobody can push to main directly |
 | `templates/rulesets/version-tags.json` | the tag ruleset `tools/repo-settings.sh` applies: only the owner can create, move or delete a `v*` tag |
-| `tests/fixtures/` | the two small projects (Node, Docker) this repository's own CI runs `node-lint`, `test-docker` and `image` on, so every workflow runs here before a tag moves |
+| `tests/fixtures/` | the three small projects (Node, Python, Docker) this repository's own CI runs `node-lint`, `type-check`, `test-docker` and `image` on, so every workflow runs here before a tag moves |
 
-The check workflows above (standards-check, python-lint, node-lint, shell-lint, actionlint, secret-scan) take `runs-on`: GitHub's
+The check workflows above (standards-check, python-lint, node-lint, type-check, shell-lint, actionlint, secret-scan) take `runs-on`: GitHub's
 `ubuntu-latest` by default, or a JSON list of labels for a self-hosted runner (`'["ci", "X64"]'`). A private
 project pays for hosted minutes, and each job is billed at least one minute however short, so a project with its own
 runners passes them here. The runner needs Docker; on a self-hosted one each job first takes ownership of files a
 previous job's containers left in the workspace.
 
-The workflows that run a tool (standards-check, python-lint, node-lint) take the tool from the commit they were
+The workflows that run a tool (standards-check, python-lint, node-lint, type-check) take the tool from the commit they were
 called at. A project at `@v2` runs the tools of `v2`, a project pinned at a commit runs the tools of that commit, and
 this repository's own CI runs the tools of the pull request. GitHub names that commit to the workflow as
 `job.workflow_sha`. The run prints it: `standards tools: murphy360/standards@<commit> (<workflow ref>)`. The tools are
@@ -95,6 +97,14 @@ not name the commit.
   that is the review's part too.
 - **Each finding says how to fix it.** A file that fails is followed by one line per finding: path, line and column,
   the rule, the linter's message, and a one-sentence fix. At most 50 are shown.
+- **Types are checked.** `type-check` runs pyright on a Python project and the project's own `tsc --noEmit` on a
+  TypeScript one. A name, an argument or an attribute that does not exist fails there, before any test runs. pyright
+  runs in `basic` mode unless the project's pyright config sets `typeCheckingMode`. An error is a finding; a warning
+  is counted and fails nothing. Each finding is printed like a code-rules finding: path, line and column, the rule,
+  the message and a one-sentence fix. There is no baseline and no input that lets a finding pass. A project with
+  debt narrows `include` in its pyright config or its `tsconfig.json`, with the reason beside it, and widens it as
+  it pays the debt down. A `# type: ignore` in a file is a silencer, and carries its reason (above). The check is
+  opt-in: a project sees nothing until it calls the workflow.
 - **A project with debt.** `mode: changed` checks every file a change touches: a changed file must be clean, a file
   nobody changes keeps what it has, and the last line of every run counts what is left. A project adopts the
   standard with its debt as it is, pays it down one changed file at a time, and drops `mode: changed` when the count
@@ -215,6 +225,19 @@ to devDependencies and commit the lockfile. `npm ci` installs them, and Dependab
 apply, and `format-check: true` runs `prettier --check` on the same files. In `.pre-commit-config.yaml`, use the
 `code-rules-node` hook in place of `code-rules` (add `--prettier` to its `args` with `format-check: true`), run
 `npm ci`, and see what ESLint reports with `pre-commit run --all-files`.
+
+The type check is a job of its own; `templates/ci.yml` shows it, commented out. A Python project passes
+`install-command`: the command that installs what its code imports into the job's Python. That is
+`pip install -r requirements.txt`, `pip install -e .`, or `pip install -e ".[dev]"` when the tests are checked too.
+Without it every third-party import is a finding. A project that imports only the standard library passes nothing.
+pyright reads the project's `pyrightconfig.json`, or `[tool.pyright]` in `pyproject.toml`. With neither it checks
+every Python file. A TypeScript project passes `language: typescript`, and needs a `tsconfig.json` and `typescript`
+in devDependencies. To see the findings before the first push, run the checker itself: `npx pyright@<version>`
+with the version `type-check.yml` pins, or `npx tsc --noEmit`. With no pyright config, pyright alone runs in its own
+default mode, `standard`, which reports a little more than `basic`; a project that sets `typeCheckingMode` in its
+config has one mode in both places. A project with findings left narrows `include` to the directories that are
+clean, writes the reason beside it, and widens it as the rest is fixed. This repository does so itself, in
+`pyproject.toml`.
 
 A project that still has a `code_rules_baseline.json` from `v1.0.0` can delete it: the tool no longer reads it, and
 says so in a note.

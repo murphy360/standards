@@ -1,0 +1,117 @@
+# Type check (tools/type_check.py): a call matches what it calls. A linter checks layout, size and complexity; it does
+# not check that a name, an argument or an attribute exists. A type checker does, in seconds, without running a test.
+# Each finding is printed with its line, its rule and how to fix it, in the form the code rules use.
+# A new workflow in v2: a project already pinned at @v2 sees nothing new until it calls it.
+# Call it from a project:
+#   jobs:
+#     types:
+#       uses: murphy360/standards/.github/workflows/type-check.yml@v2
+#       with:
+#         install-command: pip install -r requirements.txt   # Python: what the code imports
+#         # language: typescript   # npm ci, then the project's own tsc --noEmit
+#
+# Python. pyright, at the pinned release (pyright-version), installed from npm into the runner's temp directory. It
+# reads the project's own config: pyrightconfig.json, or [tool.pyright] in pyproject.toml. The mode is basic unless
+# that config sets typeCheckingMode. An error is a finding; a warning is counted and fails nothing.
+#
+# The dependencies. pyright must see what the code imports, or every third-party import is a finding. install-command
+# is the command that installs them into the job's Python (python-version): `pip install -r requirements.txt`,
+# `pip install -e .`, `pip install -e ".[dev]"` when the tests are checked too. It runs in working-directory. The
+# default is no command: enough for a project that imports only the standard library.
+#
+# TypeScript. `npm ci`, then `tsc --noEmit` from the project's node_modules with the project's tsconfig.json. The
+# project's lockfile pins TypeScript and Dependabot updates it.
+#
+# No baseline, and no input that lets a finding pass. A project with debt narrows `include` in its own pyright config
+# or tsconfig.json, with the reason beside it, and widens it as it pays the debt down.
+name: type-check
+on:
+  workflow_call:
+    inputs:
+      runs-on: {type: string, default: "ubuntu-latest", description: "a runner label, or a JSON list of labels (a self-hosted runner)"}
+      language: {type: string, default: "python", description: "python: pyright; typescript: the project's own tsc --noEmit"}
+      install-command: {type: string, default: "", description: "python: the command that installs what the code imports, so that pyright sees it"}
+      pyright-version: {type: string, default: "1.1.414", description: "the pyright release, pinned"}
+      python-version: {type: string, default: "3.12"}
+      node-version: {type: string, default: "22"}
+      working-directory: {type: string, default: "."}
+      standards-ref:
+        type: string
+        default: ""
+        description: "deprecated: the tools come from the commit this workflow is called at; read only if GitHub does not name it"
+permissions:
+  contents: read
+jobs:
+  types:
+    runs-on: ${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Take ownership of the previous job's files (a self-hosted runner)
+        if: runner.environment == 'self-hosted'
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # The tools come from the commit this workflow file was called at, so a workflow and its tools never disagree.
+      # job.workflow_sha is that commit: what @v2 or @<sha> resolved to in a project, and the commit under test in
+      # this repository's own ci.yml. It is read through toJSON because actionlint 1.7.12 does not know the property
+      # yet. The checkout goes to the runner's temp directory, so nothing is added to the project's workspace.
+      - name: The standards' tools, from the commit this workflow was called at
+        working-directory: ${{ runner.temp }}
+        env:
+          WORKFLOW_REPOSITORY: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          WORKFLOW_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
+          WORKFLOW_REF: ${{ fromJSON(toJSON(job)).workflow_ref }}
+          STANDARDS_REF: ${{ inputs.standards-ref }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          repository="${WORKFLOW_REPOSITORY:-murphy360/standards}"
+          ref="$WORKFLOW_SHA"
+          if [ -z "$ref" ] && [ -n "$STANDARDS_REF" ]; then
+            ref="$STANDARDS_REF"
+            echo "::warning::GitHub did not name this workflow's commit (job.workflow_sha is empty): the tools come from standards-ref, $ref"
+          elif [ -z "$ref" ]; then
+            echo "::error::GitHub did not name this workflow's commit (job.workflow_sha is empty). Pass standards-ref: the ref this workflow is called at."
+            exit 1
+          fi
+          rm -rf standards
+          git init -q standards
+          git -C standards fetch -q --no-tags --depth=1 "$SERVER_URL/$repository" "$ref"
+          git -C standards checkout -q --detach FETCH_HEAD
+          echo "standards tools: $repository@$(git -C standards rev-parse HEAD) (${WORKFLOW_REF:-standards-ref $ref})"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: ${{ inputs.node-version }}
+      - name: The language is one this workflow checks
+        env:
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          case "$LANGUAGE" in
+            python | typescript) ;;
+            *) echo "::error::language is python or typescript, not '$LANGUAGE'"; exit 1 ;;
+          esac
+      - name: The project's dependencies, so that pyright sees what the code imports
+        if: inputs.language == 'python' && inputs.install-command != ''
+        env:
+          INSTALL_COMMAND: ${{ inputs.install-command }}
+        run: bash -euo pipefail -c "$INSTALL_COMMAND"
+      # pyright comes from npm, where its authors publish it, into the runner's temp directory: nothing is added to
+      # the project's workspace, and the project's own node_modules, if it has one, is not touched.
+      - name: pyright, at the pinned release
+        if: inputs.language == 'python'
+        env:
+          PYRIGHT_VERSION: ${{ inputs.pyright-version }}
+        run: |
+          rm -rf "$RUNNER_TEMP/pyright"
+          npm install --no-audit --no-fund --prefix "$RUNNER_TEMP/pyright" "pyright@$PYRIGHT_VERSION"
+          echo "$RUNNER_TEMP/pyright/node_modules/.bin" >> "$GITHUB_PATH"
+      - if: inputs.language == 'typescript'
+        run: npm ci
+      - name: Type check (pyright, or the project's tsc); each finding with its line, rule and fix
+        env:
+          LANGUAGE: ${{ inputs.language }}
+        run: python3 "$RUNNER_TEMP/standards/tools/type_check.py" --language "$LANGUAGE"
