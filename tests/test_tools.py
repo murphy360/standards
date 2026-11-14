@@ -1014,8 +1014,7 @@ def test_pr_template_and_pre_commit_checks_are_off_by_default(tmp_path):
         tmp_path,
         {
             ".github/dependabot.yml": (
-                "version: 2\nupdates:\n"
-                "  - package-ecosystem: pip\n    directory: /\n"
+                "version: 2\nupdates:\n  - package-ecosystem: pip\n    directory: /\n"
             ),
             "CLAUDE.md": "x",
         },
