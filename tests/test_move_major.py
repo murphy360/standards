@@ -143,6 +143,7 @@ def test_an_annotated_tag_is_followed_to_its_commit():
     def call(method, path, body=None):
         if path == "/git/ref/tags/v2.4.0":
             return {"object": {"type": "tag", "sha": "c" * 40}}
+        assert path == f"/git/tags/{'c' * 40}"
         return {"object": {"type": "commit", "sha": NEW}}
 
     api.call = call

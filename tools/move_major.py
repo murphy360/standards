@@ -97,12 +97,11 @@ def published_tags(api: Api) -> list[str]:
 def commit_of(api: Api, tag: str) -> str:
     """The commit a tag names, through an annotated tag."""
     ref = api.call("GET", f"/git/ref/tags/{tag}")
+    while ref is not None and ref["object"]["type"] == "tag":
+        ref = api.call("GET", f"/git/tags/{ref['object']['sha']}")
     if ref is None:
         raise SystemExit(f"move_major: no tag {tag}")
-    obj = ref["object"]
-    while obj["type"] == "tag":
-        obj = api.call("GET", f"/git/tags/{obj['sha']}")["object"]
-    return obj["sha"]
+    return ref["object"]["sha"]
 
 
 def ci_passed(api: Api, sha: str, wait_s: int, sleep=time.sleep) -> tuple[bool, str]:
@@ -159,7 +158,9 @@ def report(line: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p = argparse.ArgumentParser(
+        description="Move the major tag to a published release."
+    )
     p.add_argument("--repo", required=True, help="owner/name")
     p.add_argument("--tag", required=True, help="the release's tag, vX.Y.Z")
     p.add_argument("--prerelease", action="store_true")
