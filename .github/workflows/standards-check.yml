@@ -1,6 +1,6 @@
 # Does the calling project follow the standards? Dependabot covers its ecosystems, every action is pinned to a
-# commit SHA, and CLAUDE.md exists (tools/check_standards.py). Six more checks exist but default off, so a project
-# already pinned at @v2 sees no new failure until it turns one on:
+# commit SHA, and an instruction file exists, AGENTS.md or CLAUDE.md (tools/check_standards.py). Six more checks
+# exist but default off, so a project already pinned at @v2 sees no new failure until it turns one on:
 #   jobs:
 #     standards:
 #       uses: murphy360/standards/.github/workflows/standards-check.yml@v2
@@ -8,7 +8,7 @@
 #         check-pr-template: true        # also requires .github/pull_request_template.md
 #         check-pre-commit-config: true  # also requires .pre-commit-config.yaml
 #         check-ticket-template: true    # also requires an issue template in .github/ISSUE_TEMPLATE
-#         check-templates: true          # the shared text of CLAUDE.md is the template's; a job is named result
+#         check-templates: true          # the shared text of AGENTS.md is the template's; a job is named result
 #         check-agent-settings: true     # also requires .claude/settings.json with the guard hook, and its guard
 #         check-ruff-version: true       # every ruff version the project names is the same one: local equals CI
 name: standards-check
@@ -35,7 +35,7 @@ on:
       check-templates:
         type: boolean
         default: false
-        description: "also require the shared text of CLAUDE.md or AGENTS.md to be the template's, and a CI job named result (opt-in)"
+        description: "also require the shared text of AGENTS.md or CLAUDE.md to be the template's, a CLAUDE.md beside an AGENTS.md to import it, and a CI job named result (opt-in)"
       check-agent-settings:
         type: boolean
         default: false

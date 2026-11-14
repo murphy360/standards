@@ -164,7 +164,9 @@ def same(one: str | None, other: str | None) -> bool:
             parts.pop()
         return parts
 
-    return bool(one and other) and release(one) == release(other)
+    if not one or not other:
+        return False
+    return release(one) == release(other)
 
 
 def path_command() -> list[str]:
@@ -407,7 +409,7 @@ def pin_problems(root: Path, files: list[str], calls) -> list[str]:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument(
         "--root",
         default=".",

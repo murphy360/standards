@@ -1,8 +1,8 @@
 # This repository's own updates: the pinned actions in its workflows (every project that calls them gets the update
 # by moving to the next tag of this repository), the default ruff (pyproject.toml), the images the workflows run
-# (tools/images), and the small projects in tests/fixtures that ci.yml runs python-lint, node-lint, test-docker and
-# image on. An update there is how a new ruff, ESLint, Prettier or base image is tried here first.
-# CLAUDE.md says what a pull request from Dependabot needs here before it is merged.
+# (tools/images), and the small projects in tests/fixtures that ci.yml runs python-lint, node-lint, type-check,
+# test-docker and image on. An update there is how a new ruff, ESLint, Prettier or base image is tried here first.
+# AGENTS.md says what a pull request from Dependabot needs here before it is merged.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -13,9 +13,6 @@ updates:
   - package-ecosystem: pip        # pyproject.toml: the standard's default ruff, the one place it is written
     directory: /
     schedule: {interval: weekly}
-  - package-ecosystem: pip        # the python-lint fixture: the newer ruff it pins, as a project pins its own
-    directory: /tests/fixtures/python-project
-    schedule: {interval: weekly}
   - package-ecosystem: docker     # the images the workflows run: shellcheck, actionlint, gitleaks and alpine,
     directory: /tools/images      # each by tag and digest in a Dockerfile of its own (tools/image-ref.sh reads them)
     schedule: {interval: weekly}
@@ -24,6 +21,11 @@ updates:
     schedule: {interval: weekly}
     groups:
       javascript: {patterns: ["*"]}
+  # The Python fixture: the one package its source imports (type-check), and the newer ruff it pins, as a project
+  # pins its own (python-lint with project-ruff).
+  - package-ecosystem: pip
+    directory: /tests/fixtures/python-project
+    schedule: {interval: weekly}
   - package-ecosystem: docker     # the test-docker and image fixture: its base image
     directory: /tests/fixtures/docker-project
     schedule: {interval: weekly}

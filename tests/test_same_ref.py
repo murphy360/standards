@@ -1,10 +1,10 @@
 """A workflow and its tools come from the same commit.
 
-Each check workflow (standards-check, python-lint, node-lint, shell-lint, actionlint,
-secret-scan) fetches the standards' tools at ``job.workflow_sha``, the commit the
-workflow file itself was called at, into the runner's temp directory. The step's shell
-is run here as the workflow holds it, against a local repository that stands in for
-GitHub: no network.
+Each check workflow that runs a tool (standards-check, python-lint, node-lint,
+type-check, shell-lint, actionlint, secret-scan) fetches the standards' tools at
+``job.workflow_sha``, the commit the workflow file itself was called at, into the
+runner's temp directory. The step's shell is run here as the workflow holds it, against
+a local repository that stands in for GitHub: no network.
 """
 
 import os
@@ -20,6 +20,7 @@ TOOL = {
     "standards-check": "check_standards.py",
     "python-lint": "code_rules.py",
     "node-lint": "code_rules.py",
+    "type-check": "type_check.py",
     "shell-lint": "image-ref.sh",
     "actionlint": "image-ref.sh",
     "secret-scan": "image-ref.sh",

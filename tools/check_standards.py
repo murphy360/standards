@@ -15,7 +15,9 @@ It checks:
   comment may name the version).
   Local actions (``./``), ``docker://`` images with a digest, and
   ``murphy360/standards`` at a version tag are allowed.
-* **CLAUDE.md** exists at the root (from the standards' template).
+* **The instruction file** exists at the root: ``AGENTS.md``, the file every agent
+  tool reads (from the standards' template), with or without a ``CLAUDE.md`` that
+  imports it. A project that has only ``CLAUDE.md`` passes too.
 
 Six more checks exist but default off, so a project already pinned at ``@v2`` sees no
 new failure until it turns one on (``--require-pr-template``, ``--require-pre-commit``,
@@ -29,10 +31,11 @@ workflow has a matching input for each):
   ``templates/pre-commit-config.yaml``).
 * **ticket template**: ``.github/ISSUE_TEMPLATE`` holds an issue template, ``*.md``
   or ``*.yml`` (from ``templates/ISSUE_TEMPLATE/ticket.md``).
-* **current templates**: the shared text of ``CLAUDE.md`` or ``AGENTS.md``, between
+* **current templates**: the shared text of ``AGENTS.md`` or ``CLAUDE.md``, between
   the two ``standards:shared`` markers, is the template's (``../templates`` beside
-  this file, so the tool and the template are one version), and a workflow has a job
-  named ``result``, the check the ruleset requires. ``sync_templates.py`` is the fix.
+  this file, so the tool and the template are one version), a ``CLAUDE.md`` beside an
+  ``AGENTS.md`` imports it, and a workflow has a job named ``result``, the check the
+  ruleset requires. ``sync_templates.py`` is the fix.
 * **agent settings**: ``.claude/settings.json`` runs the guard as a ``PreToolUse``
   hook on the shell tool, and the guard file it names exists (from
   ``templates/claude/``).
@@ -59,6 +62,7 @@ SHA_RE = re.compile(r"@[0-9a-f]{40}$")
 STANDARDS_RE = re.compile(
     r"^murphy360/standards/\.github/workflows/[\w.-]+\.ya?ml@v\d+(\.\d+){0,2}$"
 )
+INSTRUCTIONS = ("AGENTS.md", "CLAUDE.md")  # either is the instruction file
 GUARD_RE = re.compile(r"CLAUDE_PROJECT_DIR\}?[\"']?/(\.claude/[\w./-]*guard[\w.-]*)")
 ECOSYSTEM_FILES = {
     "pip": ("pyproject.toml", "requirements.txt", "requirements-dev.txt", "setup.py"),
@@ -276,10 +280,10 @@ def check(
         if dep.exists():
             problems.append(f".github/dependabot.yml does not watch {eco} in {d}")
     problems += unpinned(root, files)
-    if not (root / "CLAUDE.md").exists():
+    if not any((root / name).exists() for name in INSTRUCTIONS):
         problems.append(
-            "CLAUDE.md is missing "
-            "(start from templates/CLAUDE.md in murphy360/standards)"
+            "AGENTS.md is missing (start from templates/AGENTS.md and "
+            "templates/CLAUDE.md in murphy360/standards)"
         )
     if require_pr_template and not has_pr_template(files):
         problems.append(
@@ -306,7 +310,7 @@ def check(
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument("--root", default=".")
     ap.add_argument(
         "--require-pr-template",
@@ -326,8 +330,9 @@ def main(argv=None) -> int:
     ap.add_argument(
         "--require-current-templates",
         action="store_true",
-        help="also require the shared text of CLAUDE.md or AGENTS.md to be the "
-        "template's, and a CI job named `result` (opt-in)",
+        help="also require the shared text of AGENTS.md or CLAUDE.md to be the "
+        "template's, a CLAUDE.md beside an AGENTS.md to import it, and a CI job "
+        "named `result` (opt-in)",
     )
     ap.add_argument(
         "--require-agent-settings",

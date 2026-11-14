@@ -7,6 +7,8 @@
 # every workflow this repository ships runs here before a tag moves. `image` only builds: nothing is published here.
 # `lint-pinned` runs python-lint on the fixture that pins its own, newer ruff (project-ruff).
 # No ruff version is written here: tools/ruff_version.py reads the default from pyproject.toml.
+# `types` runs type-check on this repository's own tools, `types-python` on a small project with a dependency to
+# install, and `types-node` runs the TypeScript half on the Node fixture.
 # `secret-scan` runs on the commits of the change and `secret-scan-history` on the whole history, so both are tried.
 name: ci
 on:
@@ -52,7 +54,7 @@ jobs:
       check-pr-template: true
       check-pre-commit-config: true
       check-ticket-template: true   # this repository files its tickets from its own template
-      # check-templates stays off: this repository's CLAUDE.md is its own text, not a copy of templates/CLAUDE.md.
+      # check-templates stays off: this repository's AGENTS.md is its own text, not a copy of templates/AGENTS.md.
       # tests/test_templates.py runs this workflow's step with it on, against a project made from the templates.
       # check-ruff-version stays off too: this repository holds two ruff versions on purpose, the default and the
       # newer one its python-lint fixture pins. tests/test_ruff_version.py runs the step with it on.
@@ -79,6 +81,18 @@ jobs:
     permissions:
       contents: read
       packages: write   # image.yml asks for it, and a caller must grant what the workflow it calls asks for
+  types:
+    uses: ./.github/workflows/type-check.yml   # pyright on tools/; [tool.pyright] in pyproject.toml says why only tools/
+  types-python:
+    uses: ./.github/workflows/type-check.yml
+    with:
+      working-directory: tests/fixtures/python-project
+      install-command: pip install -r requirements.txt   # without it the fixture's one import is a finding
+  types-node:
+    uses: ./.github/workflows/type-check.yml
+    with:
+      language: typescript
+      working-directory: tests/fixtures/node-project
   secret-scan:
     uses: ./.github/workflows/secret-scan.yml
   secret-scan-history:
@@ -114,7 +128,7 @@ jobs:
   result:
     name: result
     if: always()
-    needs: [lint, lint-changed, lint-pinned, shell, workflows, standards, node, test-docker, image, secret-scan, secret-scan-history, tests, hook]
+    needs: [lint, lint-changed, lint-pinned, shell, workflows, standards, node, test-docker, image, types, types-python, types-node, secret-scan, secret-scan-history, tests, hook]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -20,9 +20,3 @@
 <!-- A known gap left, with its ticket, or "none". -->
 
 Closes #
-
----
-
-- [ ] Opened as a draft, pushed to as often as needed, marked ready once with `gh pr ready` after the tests and
-  the lint are green locally.
-- [ ] Every action and pre-commit hook pinned to a commit SHA, with its version in a comment.
