@@ -205,10 +205,9 @@ def test_only_a_finding_the_first_run_missed_is_added():
         return {"rel": "a.py", "line": line, "col": 1, "code": code, "message": "m"}
 
     def fake(root, keep=None, args=config.STANDARD):
-        if args is config.STANDARD:
-            return [finding("F401"), finding("T201")]
-        assert args is config.STANDARD_ALONE
-        return [finding("F401"), finding("C901", line=4)]
+        if args is config.STANDARD_ALONE:
+            return [finding("F401"), finding("C901", line=4)]
+        return [finding("F401"), finding("T201")]
 
     found = config.unhidden(Path("."), None, fake, lambda code: f"fix {code}")
     assert [f["code"] for f in found] == ["F401", "T201", "C901"]
