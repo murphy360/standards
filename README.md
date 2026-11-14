@@ -7,7 +7,7 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 
 | Path | What it is |
 |---|---|
-| `.github/workflows/standards-check.yml` | Fails a project that lacks a `.github/dependabot.yml` covering its ecosystems, pins an action to anything but a commit SHA, or has no `CLAUDE.md`; `check-templates: true` also fails one whose copy of the shared text of `CLAUDE.md` fell behind the template, or whose CI has no job named `result` |
+| `.github/workflows/standards-check.yml` | Fails a project that lacks a `.github/dependabot.yml` covering its ecosystems, pins an action to anything but a commit SHA, or has no instruction file (`AGENTS.md`, or a `CLAUDE.md` alone); `check-templates: true` also fails one whose copy of the shared text of `AGENTS.md` fell behind the template, whose `CLAUDE.md` does not import the `AGENTS.md` beside it, or whose CI has no job named `result` |
 | `.github/workflows/python-lint.yml` | ruff with the project's config plus the standard complexity limits, no `# noqa`, and the file-size limit (`tools/code_rules.py`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `ruff format --check` in the same scope; `paths` limits it to some directories; `format-only: true` proves a pull request only re-formats |
 | `.github/workflows/node-lint.yml` | ESLint with the project's config plus the standard complexity limits, and the file-size limit (`tools/code_rules.py --eslint`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `prettier --check` in the same scope; `paths` limits it to some directories. Added in v2.2.0 |
 | `.github/workflows/type-check.yml` | pyright, pinned, on a Python project (`basic` mode unless the project's pyright config sets one), or the project's own `tsc --noEmit` on a TypeScript one (`language: typescript`); `install-command` installs what the code imports, so that pyright sees it; each finding is printed with its line, rule and fix (`tools/type_check.py`). No baseline: a project with debt narrows `include` in its own config |
@@ -20,14 +20,15 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `tools/type_check.py` | the type check `type-check` runs: pyright, or the project's `tsc --noEmit` with `--language typescript`; it reads the checker's output and prints each finding the way `code_rules.py` does |
 | `.pre-commit-hooks.yaml` | the code rules as pre-commit hooks: `code-rules` is what `python-lint` runs and `code-rules-node` is what `node-lint` runs. pre-commit installs this repository (`pyproject.toml`: the modules under `tools/` and the pinned ruff) into the hook's own environment, so a project installs nothing |
 | `tools/check_standards.py` | the checks `standards-check` runs; five more (`--require-pr-template`, `--require-pre-commit`, `--require-ticket-template`, `--require-current-templates`, `--require-agent-settings`) are opt-in |
-| `tools/sync_templates.py` | brings a project's copy of the templates up to date: rewrites the shared text of its `CLAUDE.md` from the template and touches nothing else; `--check` changes nothing and exits 1 if something would change; `--all` also copies the templates the project lacks ("Staying current", below) |
+| `tools/sync_templates.py` | brings a project's copy of the templates up to date: rewrites the shared text of its `AGENTS.md` (or `CLAUDE.md`) from the template and touches nothing else; `--check` changes nothing and exits 1 if something would change; `--to-agents-md` moves a project's instructions from `CLAUDE.md` to `AGENTS.md`; `--all` also copies the templates the project lacks ("Staying current", below) |
 | `tools/agent_app.py` | gives each agent its own GitHub identity (a GitHub App): the link that creates it, a one-hour token, the commit author lines |
 | `tools/repo-settings.sh` | applies a repository's settings and its branch ruleset (below), and turns on GitHub's secret scanning and push protection where GitHub offers them; `--dry-run` prints what it would send |
 | `tools/fleet.py` | the fleet report: one row per repository, with the version of the standard it follows and what it lacks; `--run-tools <ref>` is the rehearsal before a release ("The fleet report", below) |
 | `templates/ci.yml` | a project's CI calling the workflows: one run per ref, a fixed-name `result` job to require |
 | `templates/eslint.config.mjs` | the ESLint config a TypeScript project starts from |
 | `templates/dependabot.yml` | Dependabot for actions, pip, docker and npm, weekly and grouped |
-| `templates/CLAUDE.md` | how an agent session works in a project: worktrees, Docker tests, the definition of done; the shared text sits between two marker comments, so a tool can compare and rewrite it |
+| `templates/AGENTS.md` | the one instruction file, which every agent tool reads: how work arrives, worktrees, Docker tests, the definition of done; the shared text sits between two marker comments, so a tool can compare and rewrite it |
+| `templates/CLAUDE.md` | Claude Code's import of that file, `@AGENTS.md`, and nothing else ("Which tools read `AGENTS.md`", below) |
 | `templates/pull_request_template.md` | the pull request body from "Definition of done" |
 | `templates/ISSUE_TEMPLATE/ticket.md` | the ticket, an implementer's whole brief: the problem or the owner's direction, what to build, the acceptance checklist, "For the implementer", what is out of scope, the decisions the owner reserves |
 | `templates/ISSUE_TEMPLATE/config.yml` | keeps the blank issue beside the ticket template, for a quick note |
@@ -116,14 +117,15 @@ not name the commit.
 - **Dependencies stay current.** Every third-party action is pinned to a commit SHA with its version in a comment, and
   Dependabot updates the actions, pip, docker and npm dependencies weekly, one grouped pull request per ecosystem.
   Turn on Dependabot alerts and security updates in each repository's settings (`tools/repo-settings.sh` does this).
-- **Agents work the same way everywhere.** `CLAUDE.md` from the template: draft until green, ready once, no
-  `git stash` across worktrees, never reset onto a moved base.
+- **Agents work the same way everywhere.** `AGENTS.md` from the template, the one file every agent tool reads:
+  draft until green, ready once, no `git stash` across worktrees, never reset onto a moved base. It names the one
+  command before a push and links here for the rules; it does not repeat the numbers CI enforces.
 - **Work arrives as a ticket, in the milestone's RUN ORDER.** The ticket is the implementer's whole brief, so
   every ticket has the sections of `templates/ISSUE_TEMPLATE/ticket.md`. A milestone's description carries a
   numbered RUN ORDER of its tickets. A ticket assigned to the owner is the owner's. An agent takes the first open
   ticket in the order that is not. Where a decision the owner reserved is unclear, the agent asks in one comment
   and takes the next ticket. It never guesses.
-- **The never-rules are refused, not only written.** A long session may no longer have `CLAUDE.md` in view, so
+- **The never-rules are refused, not only written.** A long session may no longer have `AGENTS.md` in view, so
   `templates/claude/settings.json` and `templates/claude/guard.py`, copied to `.claude/`, make Claude Code refuse
   the command before it runs: `git stash` in a form that saves (listing or showing a stash is fine), a push to the
   default branch, `git reset --hard` or `--soft` onto another commit, `gh pr merge --admin`, `--no-verify` on a
@@ -176,7 +178,7 @@ not name the commit.
   on an ordinary personal account gets neither, so there the hook and `secret-scan` are the only check.
   `tools/repo-settings.sh` asks for both, and warns and carries on where GitHub refuses.
 - **A test fixture is made up.** It is never a saved response from a real account: once committed, personal data
-  is in git for good, and no scanner knows a real name from an invented one (`templates/CLAUDE.md`).
+  is in git for good, and no scanner knows a real name from an invented one (`templates/AGENTS.md`).
 - **The pull request body follows "Definition of done".** `templates/pull_request_template.md`.
 
 ## Adopting it in a project
@@ -187,8 +189,9 @@ murphy360/template-python`, which already holds the steps below. An existing pro
 1. Copy `templates/ci.yml` to `.github/workflows/ci.yml` and keep the jobs that apply. That is all the code rules
    need: the lint job fetches the base it compares with.
 2. Copy `templates/dependabot.yml` to `.github/dependabot.yml`; `standards-check` names any ecosystem left out.
-3. Copy `templates/CLAUDE.md` to `CLAUDE.md` and fill in "This project". Keep the two marker comments: the text
-   between them is the standard's ("Staying current", below).
+3. Copy `templates/AGENTS.md` to `AGENTS.md` and `templates/CLAUDE.md` to `CLAUDE.md`. In `AGENTS.md`, fill in
+   the title and "This project", and keep the two marker comments: the text between them is the standard's
+   ("Staying current", below). `CLAUDE.md` stays as it is: it imports `AGENTS.md`.
 4. Copy `templates/pull_request_template.md` to `.github/pull_request_template.md`.
 5. Copy `templates/pre-commit-config.yaml` to `.pre-commit-config.yaml`; `pip install pre-commit && pre-commit
    install` once per checkout. It holds the code rules as a hook, so nothing else is installed: no ruff, and no
@@ -241,29 +244,56 @@ says so in a note.
 
 ### Staying current
 
-A copy falls behind when its template changes. The shared text of `CLAUDE.md` is everything between two marker
+A copy falls behind when its template changes. The shared text of `AGENTS.md` is everything between two marker
 comments, `<!-- standards:shared:begin -->` and `<!-- standards:shared:end -->`, which a rendered page does not show.
 The title and "This project" are outside them. Two things keep a project's copy current:
 
 - **The sync tool.** `python3 <standards>/tools/sync_templates.py <checkout>` rewrites the text between the markers
   from the template and touches nothing outside them. It prints what it changed. `--check` changes nothing and
-  exits 1 if something would change. `--all` also copies the pull request template, the pre-commit config and
-  `dependabot.yml` when the project lacks them; an existing file is kept unless `--overwrite` is given. The
+  exits 1 if something would change. `--all` also copies the pull request template, the pre-commit config,
+  `dependabot.yml` and the issue templates (`ticket.md` and `config.yml`, when the project has no issue template
+  of its own) when the project lacks them; an existing file is kept unless `--overwrite` is given. The
   rulesets are not copied: `tools/repo-settings.sh` applies them. `<standards>` is a checkout at the version the
   project's CI calls: `git clone --depth 1 --branch v2 https://github.com/murphy360/standards /tmp/standards`.
 - **The check.** `check-templates: true` in `standards-check`'s `with:` fails a pull request while the shared text
   differs from the template of the version the workflow is called at. It names the file, shows the first lines
   that differ and prints the command above. Trailing whitespace and line endings do not count. The same input
-  requires a CI job named `result`. It defaults off.
+  requires a CI job named `result`, and a `CLAUDE.md` beside an `AGENTS.md` to import it. It defaults off.
 
-A `CLAUDE.md` copied before the markers existed has none. Run the tool once with
+An instruction file copied before the markers existed has none. Run the tool once with
 `--shared-until "## This project"`: everything under the title down to that heading is replaced by the shared text,
 between markers, so move anything of the project's own under the heading first. Without that flag the tool changes
 nothing in such a file and says what to do: it never guesses where a project's own text starts.
 
+A project that copied the template before `AGENTS.md` existed keeps its instructions in `CLAUDE.md`. It still
+passes: `standards-check` accepts either file, and the tool rewrites the shared text where it is. Nothing is moved
+unless the project asks, with `--to-agents-md`:
+
+- **`CLAUDE.md` alone.** It becomes `AGENTS.md`, byte for byte, so the title and "This project" are kept. The
+  shared text is then brought up to date there, and `CLAUDE.md` becomes the template's import. A file without
+  markers moves as it is; add `--shared-until "## This project"` to give it the shared text in the same run.
+- **Both files, and `CLAUDE.md` imports `AGENTS.md`**, or **`AGENTS.md` alone.** Nothing to move. `--all` gives an
+  `AGENTS.md` that stands alone the `CLAUDE.md` that imports it.
+- **Both files, and no import.** The tool never merges two files. If both hold the same text, `CLAUDE.md` becomes
+  the import. If they differ, it moves nothing and says what to do by hand: put what every agent needs in
+  `AGENTS.md`, and leave in `CLAUDE.md` the line `@AGENTS.md` and what only Claude needs.
+
+`--check` shows the move and changes nothing.
+
 Run the tool whenever the project moves to a new version of the standard. A project at `@v2` moves when the `v2`
 tag does. With `check-templates` on, the first pull request after a release that changed the shared text fails
 until the tool has run. The rehearsal (`tools/fleet.py --run-tools <ref>`) names those projects before the tag moves.
+
+### Which tools read `AGENTS.md`
+
+`AGENTS.md` is the name the agent tools agreed on (https://agents.md): plain Markdown at the root of a repository.
+Read in each tool's own documentation on 2026-11-13: Claude Code loads `AGENTS.md` through the `@AGENTS.md` import
+in `CLAUDE.md`, and from v2.1.277 reads it directly when a project has no `CLAUDE.md`, though some sessions cannot,
+so the template keeps the import (https://code.claude.com/docs/en/memory); Codex reads `AGENTS.md` before any work;
+GitHub Copilot reads it, the nearest one in the tree first; Jules looks for it in the root. Not verified: Grok,
+whose documentation does not name the file, and the other tools https://agents.md lists (Cursor, Gemini CLI, Aider
+and more), which were taken from that list only. A project that has both files and no import keeps two files in
+step, because Claude Code then reads `CLAUDE.md` alone.
 
 ### Tickets and milestones
 
@@ -369,7 +399,8 @@ every repository that calls the standard's workflows.
 
 `python3 tools/fleet.py` prints one table, a row per repository of the owner that is not archived. A row shows the
 workflows the repository calls and at which ref (`v2`, an older major, or a commit SHA), its lint mode, whether a
-caller passes `format-only`, the templates it has, whether a CI job is named `result`, whether the `main` ruleset is
+caller passes `format-only`, the instruction file it has (`AGENTS.md`, `CLAUDE.md` or `both`), the other
+templates it has, whether a CI job is named `result`, whether the `main` ruleset is
 applied, and its open Dependabot pull requests with the age of the oldest. Under the table it counts the adopters at
 the current major, at an older major and at a commit SHA, and the repositories outside the standard. `--json` prints
 the same for a program, `--repo <name>` keeps one repository, and `--owner` names another owner. It needs `gh`,

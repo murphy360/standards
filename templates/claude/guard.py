@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The guard rail behind the never-rules of CLAUDE.md: a Claude Code hook.
+"""The guard rail behind the never-rules of AGENTS.md: a Claude Code hook.
 
 From murphy360/standards (``templates/claude/guard.py``). Copy it to
 ``.claude/guard.py``, beside ``.claude/settings.json`` (``templates/claude/``), which

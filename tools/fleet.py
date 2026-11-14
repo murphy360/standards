@@ -12,7 +12,8 @@ It lists the owner's repositories that are not archived. For each one it prints:
   characters);
 * the lint mode (``all`` or ``changed``) and whether a caller passes
   ``format-only``;
-* which templates it has: ``CLAUDE.md``, ``.github/dependabot.yml``,
+* which templates it has: the instruction file by its name (``AGENTS.md``,
+  ``CLAUDE.md``, or ``both``), ``.github/dependabot.yml``,
   ``.pre-commit-config.yaml``, ``.github/pull_request_template.md``, and a CI job
   named ``result``;
 * whether a ruleset named ``main`` is applied (``?`` when the API refuses to say);
@@ -52,7 +53,8 @@ DEFAULT_OWNER = "murphy360"
 TOPIC = "no-standards"
 LINT_WORKFLOWS = ("python-lint", "node-lint")
 DEPENDABOT = ("dependabot", "dependabot[bot]")
-TEMPLATES = ("CLAUDE.md", "dependabot", "pre-commit", "pr-template", "result")
+INSTRUCTIONS = ("AGENTS.md", "CLAUDE.md")  # either is the instruction file
+TEMPLATES = ("instructions", "dependabot", "pre-commit", "pr-template", "result")
 PAGE = 10
 
 # One page of the owner's repositories, with everything a row needs. The files are
@@ -236,11 +238,19 @@ def format_only(calls: list[dict]) -> bool:
     return any(call["with"].get("format-only", "false") != "false" for call in calls)
 
 
+def instructions(root: set[str]) -> str | None:
+    """The instruction file a repository has, by its name: ``AGENTS.md``,
+    ``CLAUDE.md``, or ``both``. Only the names are read, so ``both`` does not say
+    whether ``CLAUDE.md`` imports ``AGENTS.md``. None without one."""
+    found = [name for name in INSTRUCTIONS if name in root]
+    return "both" if len(found) == 2 else (found or [None])[0]
+
+
 def templates(root: set[str], github: set[str], result_job: bool) -> dict[str, bool]:
     """Which templates a repository has, from the names in its root and .github."""
     pr_names = {name.lower() for name in root | github}
     return {
-        "CLAUDE.md": "CLAUDE.md" in root,
+        "instructions": instructions(root) is not None,
         "dependabot": "dependabot.yml" in github,
         "pre-commit": ".pre-commit-config.yaml" in root,
         "pr-template": "pull_request_template.md" in pr_names,
@@ -294,6 +304,7 @@ def row(node: dict, major: int, now: datetime, standards_name: str | None) -> di
         "kinds": sorted({c["kind"] for c in calls}),
         "lint_mode": lint_mode(calls),
         "format_only": format_only(calls),
+        "instructions": instructions(names(node.get("root"))),
         "templates": templates(
             names(node.get("root")), names(node.get("github")), result_job
         ),
@@ -411,6 +422,13 @@ def yes(value: bool) -> str:
     return "yes" if value else "-"
 
 
+def template_cell(row: dict, template: str) -> str:
+    """yes or ``-``; for the instruction file, the name it has."""
+    if template == "instructions":
+        return row["instructions"] or "-"
+    return yes(row["templates"][template])
+
+
 def aligned(lines: list[list[str]]) -> list[str]:
     """Rows of cells as text, each column as wide as its widest cell."""
     widths = [max(len(cell) for cell in column) for column in zip(*lines)]
@@ -434,7 +452,7 @@ def table(rows: list[dict]) -> list[str]:
                 *(refs_cell(r["calls"], w) for w in workflows),
                 r["lint_mode"] or "-",
                 yes(r["format_only"]),
-                *(yes(r["templates"][t]) for t in TEMPLATES),
+                *(template_cell(r, t) for t in TEMPLATES),
                 r["ruleset"],
                 str(r["dependabot_prs"]),
                 oldest,

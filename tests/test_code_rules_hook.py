@@ -190,7 +190,7 @@ def test_shellcheck_is_one_version_in_the_workflow_and_the_configs():
 
 
 def test_no_document_tells_a_reader_to_run_the_code_rules_from_a_checkout():
-    documents = [ROOT / "README.md", ROOT / "CLAUDE.md"]
+    documents = [ROOT / "README.md", ROOT / "AGENTS.md", ROOT / "CLAUDE.md"]
     documents += [p for p in (ROOT / "templates").rglob("*") if p.is_file()]
     for path in documents:
         named = set(re.findall(r"<standards>/tools/([\w.-]+)", path.read_text()))
@@ -201,7 +201,7 @@ def test_no_document_tells_a_reader_to_run_the_code_rules_from_a_checkout():
 
 
 def test_the_agent_template_names_one_command_before_a_push():
-    text = (ROOT / "templates" / "CLAUDE.md").read_text()
+    text = (ROOT / "templates" / "AGENTS.md").read_text()
     assert "Before a push, run `pre-commit run --all-files`." in text
     assert "It is the one command" in text
     assert "pip install ruff" not in text
