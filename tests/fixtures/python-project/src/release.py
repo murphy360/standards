@@ -9,3 +9,8 @@ from packaging.version import Version
 def newer(a: str, b: str) -> bool:
     """Whether release ``a`` is newer than release ``b``."""
     return Version(a) > Version(b)
+
+
+def broken(a: str) -> str:
+    """A throwaway fault, to prove the check fails: Version has no such attribute."""
+    return Version(a).no_such_attribute()
