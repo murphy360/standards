@@ -5,6 +5,7 @@ ruff 0.16.0 turned on about 400 rules for a config that selects none, where it h
 ``ruff format --check`` now prints diagnostics: the tool reads both styles."""
 
 import importlib.util
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -161,3 +162,13 @@ def test_the_format_check_reads_the_newer_output():
 
 def test_a_clean_check_names_no_file():
     assert ruff_version.format_check("2 files already formatted\n", "") == ([], [])
+
+
+@pytest.mark.parametrize(
+    "config", [".pre-commit-config.yaml", "templates/pre-commit-config.yaml"]
+)
+def test_no_pre_commit_hook_lints_with_ruffs_own_defaults(config):
+    """A plain `ruff` hook lints with ruff's defaults: the code rules hook lints."""
+    text = (TOOLS.parent / config).read_text()
+    plain = re.search(r"^\s*- id: ruff\s*$", text, re.M)
+    assert not plain, f"{config}: a plain `ruff` hook, ruff's ~400 default rules"

@@ -39,7 +39,7 @@ rules.
 | `templates/pull_request_template.md` | the pull request body from "Definition of done" |
 | `templates/ISSUE_TEMPLATE/ticket.md` | the ticket, an implementer's whole brief: the problem or the owner's direction, what to build, the acceptance checklist, "For the implementer", what is out of scope, the decisions the owner reserves |
 | `templates/ISSUE_TEMPLATE/config.yml` | keeps the blank issue beside the ticket template, for a quick note |
-| `templates/pre-commit-config.yaml` | the code rules (the `code-rules` hook), ruff, ruff format, shellcheck, actionlint and gitleaks, each pinned at the version CI uses, so a finding is caught before the push and a secret before the commit |
+| `templates/pre-commit-config.yaml` | the code rules (the `code-rules` hook, which runs ruff with the standard's rules), ruff format, shellcheck, actionlint and gitleaks, each pinned at the version CI uses, so a finding is caught before the push and a secret before the commit |
 | `templates/claude/settings.json` | what a Claude Code session refuses, copied to `.claude/settings.json`: deny rules for the simple forms of the never-rules, and a `PreToolUse` hook that runs the guard before every shell command. Nothing else: no model, no allow list |
 | `templates/claude/guard.py` | the guard, copied to `.claude/guard.py`: it refuses `git stash`, a push to the default branch, a reset onto another commit, an admin merge, `--no-verify` and a forced push, says what to do instead, and runs `pre-commit run --all-files` before a push |
 | `templates/rulesets/main.json` | the branch ruleset `tools/repo-settings.sh` applies: pull request required, linear history, no force push, the `result` job required; the owner can merge a pull request past a failed check, and nobody can push to main directly |
@@ -257,7 +257,7 @@ costs a minute.
 - **Local equals CI: one command before a push.** `pre-commit run --all-files` runs what the lint in CI runs.
   `templates/pre-commit-config.yaml` holds the `code-rules` hook (`.pre-commit-hooks.yaml`): the code rules on
   every file, with the complexity limits, the `# noqa` rule, the size limit and the format, printing the lines CI
-  prints. It also holds ruff and ruff format at the standard's default ruff, shellcheck at the version
+  prints. It also holds ruff format at the standard's default ruff, shellcheck at the version
   `shell-lint.yml` uses, actionlint, gitleaks, and the usual hygiene hooks (merge conflicts, large files, end of
   file). Every hook is pinned to a commit SHA. pre-commit builds each hook's own environment, with the default
   ruff in it, so nothing is installed on the machine and no second ruff can drift. A project that pins its own

@@ -211,6 +211,6 @@ def test_every_pre_commit_hook_is_pinned_to_a_commit_sha():
 
 def test_pre_commit_config_names_the_tools_it_pins():
     text = PRE_COMMIT.read_text()
-    hooks = ("ruff", "ruff-format", "shellcheck", "actionlint-docker", "gitleaks")
+    hooks = ("ruff-format", "shellcheck", "actionlint-docker", "gitleaks")
     for hook_id in (*hooks, "code-rules"):
         assert f"id: {hook_id}\n" in text
