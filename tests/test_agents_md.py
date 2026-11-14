@@ -172,15 +172,18 @@ def test_the_other_shared_sections_keep_their_rules():
     ):
         assert needle in where, needle
     done = section("## Definition of done")
-    # step 2 is as it was: whether the pasted output goes is the owner's decision
-    step = "2. A unit test for every new behaviour, green in Docker; the PR body pastes"
-    assert step + " the last lines of the output.\n" in done
+    # owner decision 2026-11-14: CI's run is the record, so no pasted test output
+    assert "2. A unit test for every new behaviour, green in Docker." in done
+    assert (
+        "pastes the last lines" not in done and "the tests and their output" not in done
+    )
+    # this repository is public: no project's name in the shared text
+    assert "Proteus" not in done
     flat = " ".join(done.split())
     for needle in (
         "`gh pr create --draft --base main`",
         "mark it ready **once**, with `gh pr ready`",
         "comment the link on the ticket",
-        "the tests and their output",
         "never enable auto-merge",
     ):
         assert needle in flat, needle
@@ -189,7 +192,7 @@ def test_the_other_shared_sections_keep_their_rules():
     ]
 
 
-def test_the_pull_request_templates_end_at_closes_and_keep_the_tests_section():
+def test_the_pull_request_templates_end_at_closes_and_paste_no_test_output():
     ours = (ROOT / ".github" / "pull_request_template.md").read_text()
     template = (ROOT / "templates" / "pull_request_template.md").read_text()
     assert ours.split("\n", 1)[1] == template.split("\n", 1)[1]
@@ -198,12 +201,10 @@ def test_the_pull_request_templates_end_at_closes_and_keep_the_tests_section():
     headings = [line for line in template.splitlines() if line.startswith("## ")]
     assert headings == [
         "## What and why",
-        "## Tests",
         "## Docs touched",
         "## Known issues",
     ]
-    tests = template.split("## Tests")[1].split("## Docs touched")[0]
-    assert "The last lines of the test output" in tests and "```\n```" in tests
+    assert "test output" not in template
 
 
 def test_this_repository_has_the_layout_with_its_own_text():
