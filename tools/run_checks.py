@@ -2,7 +2,7 @@
 """The quick checks of a project in one job: each one runs, and the run fails at the
 end. The one step of the ``checks`` action (``actions/checks``).
 
-    python3 run_checks.py                         # the checks CHECKS names, or the default
+    python3 run_checks.py                         # the checks CHECKS names
     python3 run_checks.py shell-lint actionlint   # these two
 
 A check is named after the reusable workflow that runs the same step:
@@ -169,7 +169,7 @@ def summary_lines(results: list[dict]) -> list[str]:
     return out
 
 
-def annotations(results: list[dict]) -> list[str]:
+def error_lines(results: list[dict]) -> list[str]:
     """An error annotation per failed check, naming the group that holds its lines."""
     return [
         f"::error title=checks::{r['part']} failed (exit {r['code']}). Its lines are "
@@ -202,7 +202,7 @@ def main(argv=None, *, run: Runner = run_command, env=None) -> int:
     parts = named(ap.parse_args(argv).checks, env)
     on_github = env.get("GITHUB_ACTIONS") == "true"
     results = run_all(parts, env, run, on_github)
-    lines = summary_lines(results) + (annotations(results) if on_github else [])
+    lines = summary_lines(results) + (error_lines(results) if on_github else [])
     print("\n".join(lines), flush=True)
     target = env.get("GITHUB_STEP_SUMMARY")
     if target:

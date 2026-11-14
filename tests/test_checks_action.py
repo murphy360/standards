@@ -767,3 +767,13 @@ def test_this_repository_runs_the_checks_the_way_the_template_does():
     second = job.split("      - if: ${{ !cancelled() }}\n", 1)[1]
     assert "          checks: node-lint\n" in second
     assert "          working-directory: tests/fixtures/node-project\n" in second
+
+
+def test_the_readme_has_the_actions_the_one_job_and_what_a_run_costs():
+    text = (ROOT / "README.md").read_text()
+    for row in ("actions/checks", "actions/take-ownership", "tools/steps/"):
+        assert f"| `{row}" in text, row
+    assert "| `tools/run_checks.py` |" in text
+    cost = text.split("### What a run costs", 1)[1].split("\n## ", 1)[0]
+    assert "Measured" in cost and "Arithmetic" in cost
+    assert "billed" in cost and "removed in v3" in text
