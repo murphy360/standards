@@ -7,62 +7,75 @@ on:
 permissions:
   contents: read
 # One run per ref. A pull request's superseded run is cancelled, so a second push never waits behind the first; a
-# push to main always finishes what it started. A job that calls a reusable workflow cannot set its own
-# timeout-minutes (GitHub refuses it), so each reusable workflow's own job carries one instead; that is what stops
-# a stuck job holding a runner for six hours.
+# push to main always finishes what it started. Every job has a time limit, which is what stops a stuck job
+# holding a runner for six hours: `checks` sets its own, and a job that calls a reusable workflow cannot (GitHub
+# refuses it), so the reusable workflow's own job carries one instead.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  standards:
-    uses: murphy360/standards/.github/workflows/standards-check.yml@v2
-    # with:
-    #   check-pr-template: true        # also requires .github/pull_request_template.md
-    #   check-pre-commit-config: true  # also requires .pre-commit-config.yaml
-    #   check-ticket-template: true    # also requires an issue template in .github/ISSUE_TEMPLATE
-    #   check-templates: true          # the shared text of AGENTS.md is the template's (tools/sync_templates.py)
-    #   check-agent-settings: true     # also requires .claude/settings.json with the guard hook
-    #   check-ruff-version: true       # every ruff version the project names is the same one
-  lint:
-    uses: murphy360/standards/.github/workflows/python-lint.yml@v2
-    with:
-      format-check: true
-      # mode: changed  # default `all`: every file must be clean. `changed`: every file a change touches, while
-      #                # `pre-commit run --all-files` still lists findings
-      format-only: ${{ contains(github.event.pull_request.labels.*.name, 'format-only') }}
-      # silencers: true  # a skip, an xfail, a type ignore, a `# pragma: no cover` and a `# shellcheck disable=`
-      #                  # each carry a reason, and the last line counts them
-      # project-ruff: true  # lint with the ruff the project pins (`ruff==<version>` in requirements-dev.txt), so
-      #                     # Dependabot's pull request here is where a new ruff's findings show up
-  # A JavaScript or TypeScript project uses node-lint instead of python-lint, or as a job of its own:
-  # node:
-  #   uses: murphy360/standards/.github/workflows/node-lint.yml@v2
-  #   with:
-  #     format-check: true
-  #     # mode: changed
-  #     # no-inline-config: true  # an eslint-disable comment hides nothing and is a problem
-  #     # silencers: true         # a `.skip` in a test carries a reason, and `.only` is a problem
-  # A type check: pyright in basic mode for Python, the project's own tsc for TypeScript. A project with findings left
-  # narrows `include` in its pyright config or tsconfig.json, with the reason beside it. Add `types` to result's needs.
+  # The quick checks in one job: standards-check, the lint, shellcheck, actionlint and the secret scan. One runner
+  # and one checkout, so a private project is billed for one job where five reusable workflows are five. Every check
+  # runs, also after one failed, and the last lines of the step say which failed.
+  # The job is the project's own, so it names its runner and its time limit: `runs-on: [self-hosted, linux]` for a
+  # self-hosted runner, as in any job. The runner needs Docker.
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # A self-hosted runner keeps its workspace: this takes back the files a container of the job before left
+      # there, so that the checkout can replace them. On a GitHub-hosted runner it does nothing.
+      - uses: murphy360/standards/actions/take-ownership@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # the secret scan reads the commits of the change, so it needs the history
+      - uses: murphy360/standards/actions/checks@v2
+        with:
+          format-check: true
+          # checks: standards-check node-lint shell-lint actionlint secret-scan  # a JavaScript or TypeScript
+          #                # project: node-lint in place of python-lint. The default is the five with python-lint
+          # mode: changed  # default `all`: every file must be clean. `changed`: every file a change touches, while
+          #                # `pre-commit run --all-files` still lists findings
+          format-only: ${{ contains(github.event.pull_request.labels.*.name, 'format-only') }}
+          # silencers: true  # a skip, an xfail, a type ignore, a `# pragma: no cover` and a `# shellcheck disable=`
+          #                  # each carry a reason, and the last line counts them. node-lint: a `.skip` in a test
+          #                  # carries a reason, and `.only` is a problem
+          # project-ruff: true  # lint with the ruff the project pins (`ruff==<version>` in requirements-dev.txt), so
+          #                     # Dependabot's pull request here is where a new ruff's findings show up
+          # no-inline-config: true  # node-lint: an eslint-disable comment hides nothing and is a problem
+          # paths: src tools              # the lint: only these directories (default: every tracked file)
+          # working-directory: frontend   # the lint: the directory it runs in
+          # check-pr-template: true        # also requires .github/pull_request_template.md
+          # check-pre-commit-config: true  # also requires .pre-commit-config.yaml
+          # check-ticket-template: true    # also requires an issue template in .github/ISSUE_TEMPLATE
+          # check-templates: true          # the shared text of AGENTS.md is the template's (tools/sync_templates.py)
+          # check-agent-settings: true     # also requires .claude/settings.json with the guard hook
+          # check-ruff-version: true       # every ruff version the project names is the same one
+          # full-history: true  # the secret scan reads every commit, not only this change's: once when adopting
+      # A second lint, in another directory or for another language, is a second step. It runs after a failure too.
+      # - if: ${{ !cancelled() }}
+      #   uses: murphy360/standards/actions/checks@v2
+      #   with:
+      #     checks: node-lint
+      #     working-directory: frontend
+      #     format-check: true
+  # Each of the five checks is also a reusable workflow, a job of its own: standards-check.yml, python-lint.yml or
+  # node-lint.yml, shell-lint.yml, actionlint.yml and secret-scan.yml, at @v2. A project that calls them keeps
+  # working through v2 with the same inputs. They are removed in v3.
+  # A type check: pyright in basic mode for Python, the project's own tsc for TypeScript. It installs what the code
+  # imports, so it is a job of its own. A project with findings left narrows `include` in its pyright config or
+  # tsconfig.json, with the reason beside it. Add `types` to result's needs.
   # types:
   #   uses: murphy360/standards/.github/workflows/type-check.yml@v2
   #   with:
   #     install-command: pip install -r requirements.txt  # what the code imports, so that pyright sees it
   #     # language: typescript  # instead: npm ci, then tsc --noEmit with the project's tsconfig.json
-  shell:
-    uses: murphy360/standards/.github/workflows/shell-lint.yml@v2
-  workflows:
-    uses: murphy360/standards/.github/workflows/actionlint.yml@v2
-  secret-scan:
-    uses: murphy360/standards/.github/workflows/secret-scan.yml@v2
-    # with:
-    #   full-history: true  # every commit, not only this change's: once when adopting, or on a schedule
   test:
     uses: murphy360/standards/.github/workflows/test-docker.yml@v2
     with:
       command: "pytest -q"
   image:
-    needs: [lint, test]
+    needs: [checks, test]
     uses: murphy360/standards/.github/workflows/image.yml@v2
     with:
       image: my-service
@@ -75,7 +88,7 @@ jobs:
   result:
     name: result
     if: always()
-    needs: [standards, lint, shell, workflows, secret-scan, test, image]
+    needs: [checks, test, image]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -6,6 +6,9 @@ This repository is the standard every murphy360 project follows (README.md). Cha
 - A change to a reusable workflow or a tool is tested here first (ci.yml runs this repository's own workflows on
   itself, and `pytest tests` covers the tools).
 - A new workflow comes with its fixture (a small project in `tests/fixtures/`) and a job in ci.yml that `result` needs.
+- A new action under `actions/` comes with a step in ci.yml's `checks` job, by local path (`uses: ./actions/<name>`).
+  The shell of a step lives in `tools/steps/`, where the reusable workflow and the action both run it, and a test
+  runs the script itself. No workflow and no action holds a second copy.
 - Versioning: projects pin the major tag (`@v2`). A compatible change moves that tag after a `v2.x.y` release; a
   breaking change is the next major (`v3`), with release notes saying what a project must change. Never move a tag to a commit that fails CI.
 - Every action stays pinned to a commit SHA with its version in a comment; Dependabot updates them.
@@ -24,6 +27,9 @@ This repository is the standard every murphy360 project follows (README.md). Cha
     README row of `shell-lint.yml` names the shellcheck version. alpine needs nothing else.
   - *ruff in `tests/fixtures/python-project`*: the fixture's own pin. CI's `lint-pinned` job shows what the new
     release finds in the fixture. It must stay newer than the default.
-  - *actions, the Node and Docker fixtures, and the Python fixture's other package*: nothing else to change.
+  - *actions*: each action is one commit everywhere. Dependabot moves the workflows and `actions/*/action.yml`
+    together. `templates/ci.yml` pins `actions/checkout` too, and Dependabot does not read it: set it to the same
+    commit. The tests fail until every place agrees, and say which.
+  - *the Node and Docker fixtures, and the Python fixture's other package*: nothing else to change.
 - Keep the templates (templates/) in step with the workflows: a project copies them.
 - Prose: short sentences, no em-dashes.

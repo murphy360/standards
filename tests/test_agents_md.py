@@ -241,30 +241,19 @@ def test_the_base_check_names_agents_md_when_there_is_no_instruction_file(tmp_pa
     assert "templates/AGENTS.md" in problem and "templates/CLAUDE.md" in problem
 
 
-def workflow_step() -> str:
-    """The shell of standards-check's last step, as the workflow holds it."""
-    text = (ROOT / ".github" / "workflows" / "standards-check.yml").read_text()
-    step = text.split("- name: Does this repository follow the standards?\n", 1)[1]
-    lines = step.split("run: |\n", 1)[1].splitlines()
-    return "\n".join(line[10:] for line in lines) + "\n"
+# standards-check's last step: the workflow and the checks action run this script.
+WORKFLOW_STEP = ROOT / "tools" / "steps" / "standards-check.sh"
 
 
 @pytest.mark.parametrize("templates", ["false", "true"])
 def test_a_project_with_only_agents_md_passes_the_workflow(tmp_path, templates):
     """The workflow's own step, against the real tools: with every check off, as
     an adopter calls it today, and with the template check on."""
-    temp = tmp_path / "runner-temp"
-    temp.mkdir()
-    (temp / "standards").symlink_to(ROOT, target_is_directory=True)
     root = project(tmp_path, {"AGENTS.md": instructions()})
     res = subprocess.run(
-        ["bash", "-e", "-c", workflow_step()],
+        ["bash", str(WORKFLOW_STEP)],
         cwd=root,
-        env={
-            "PATH": os.environ["PATH"],
-            "RUNNER_TEMP": str(temp),
-            "CHECK_TEMPLATES": templates,
-        },
+        env={"PATH": os.environ["PATH"], "CHECK_TEMPLATES": templates},
         capture_output=True,
         text=True,
     )

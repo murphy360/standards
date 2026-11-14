@@ -17,13 +17,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 TOOL = {
-    "standards-check": "check_standards.py",
-    "python-lint": "code_rules.py",
-    "node-lint": "code_rules.py",
+    "standards-check": "steps/standards-check.sh",
+    "python-lint": "steps/code-rules.sh",
+    "node-lint": "steps/code-rules.sh",
     "type-check": "type_check.py",
-    "shell-lint": "image-ref.sh",
-    "actionlint": "image-ref.sh",
-    "secret-scan": "image-ref.sh",
+    "shell-lint": "steps/shell-lint.sh",
+    "actionlint": "steps/actionlint.sh",
+    "secret-scan": "steps/secret-scan.sh",
 }
 CHECKS = tuple(TOOL)
 STEP = "- name: The standards' tools, from the commit this workflow was called at\n"
@@ -196,6 +196,7 @@ def test_the_tools_run_from_the_runners_temp_directory(name):
     text = workflow(name)
     assert ".standards/" not in text
     assert f'"$RUNNER_TEMP/standards/tools/{TOOL[name]}"' in text
+    assert (ROOT / "tools" / TOOL[name]).is_file()
     assert text.index(STEP) < text.index("$RUNNER_TEMP/standards/tools/")
 
 

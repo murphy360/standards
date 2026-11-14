@@ -633,16 +633,8 @@ def test_a_re_format_leaves_the_findings_it_found(tmp_path, capsys):
 # request's merge commit, from a remote whose base branch has moved on since
 
 
-def lint_step() -> str:
-    """The shell of python-lint's "Code rules" step, as the workflow holds it."""
-    text = (ROOT / ".github" / "workflows" / "python-lint.yml").read_text()
-    block = text.split("- name: Code rules", 1)[1].split("run: |\n", 1)[1]
-    lines = []
-    for line in block.splitlines():
-        if line.strip() and not line.startswith(" " * 10):
-            break
-        lines.append(line[10:])
-    return "\n".join(lines) + "\n"
+# The shell of the "Code rules" step: python-lint.yml and the checks action both run it.
+LINT_STEP = TOOLS / "steps" / "code-rules.sh"
 
 
 def moved_on_remote(tmp_path) -> dict:
@@ -682,14 +674,10 @@ def shallow_checkout(tmp_path, origin: Path, commit_sha: str) -> Path:
 def run_lint_step(
     tmp_path, ci: Path, pr_base: str, mode: str = "changed", event: str = "pull_request"
 ):
-    runner_temp = tmp_path / "runner-temp"
-    (runner_temp / "standards").mkdir(parents=True)
-    (runner_temp / "standards" / "tools").symlink_to(TOOLS)
     env = {
         "PATH": os.environ["PATH"],
         "HOME": str(tmp_path),
         "CI": "true",
-        "RUNNER_TEMP": str(runner_temp),
         "MODE": mode,
         "FORMAT_CHECK": "true",
         "EVENT": event,
@@ -697,7 +685,7 @@ def run_lint_step(
         "BEFORE": "",
     }
     return subprocess.run(
-        ["bash", "-e", "-c", lint_step()],
+        ["bash", str(LINT_STEP), "python"],
         cwd=ci,
         env=env,
         capture_output=True,
@@ -767,11 +755,10 @@ def test_the_workflow_checks_every_file_by_default():
     text = (ROOT / ".github" / "workflows" / "python-lint.yml").read_text()
     assert 'mode: {type: string, default: "all"' in text
     assert "ratchet" not in text and "--report-only" not in text
-    assert "export CODE_RULES_BASE" in lint_step()
-
-
-def _between(text: str, start: str, end: str) -> str:
-    return text.split(start, 1)[1].split(end, 1)[0]
+    assert (
+        'run: bash "$RUNNER_TEMP/standards/tools/steps/code-rules.sh" python\n' in text
+    )
+    assert "export CODE_RULES_BASE" in LINT_STEP.read_text()
 
 
 def test_node_lint_checks_every_file_and_has_no_baseline():
@@ -781,8 +768,8 @@ def test_node_lint_checks_every_file_and_has_no_baseline():
     assert "ratchet" not in text and "code_rules_baseline" not in text
     assert "--update" not in text and "@v1" not in text
     assert "node-lint.yml@v2" in text and "Added in v2.2.0" in text
-    assert "--eslint" in text and "--prettier" in text and "--no-format" in text
-    assert "export CODE_RULES_BASE" in text
+    step = LINT_STEP.read_text()
+    assert "--eslint" in step and "--prettier" in step and "--no-format" in step
     # any commit SHA with its version beside it: Dependabot moves the pin
     for action in ("actions/checkout", "actions/setup-python", "actions/setup-node"):
         assert re.search(rf"{action}@[0-9a-f]{{40}}  # v\d+\.\d+\.\d+\n", text), action
@@ -793,9 +780,10 @@ def test_node_lint_checks_every_file_and_has_no_baseline():
         py.split("runs-on: ", 1)[1].split("\n", 1)[0]
         == text.split("runs-on: ", 1)[1].split("\n", 1)[0]
     )
-    # The base a pull request is compared with is the same shell in both workflows.
-    start, end = 'base=""', 'export CODE_RULES_BASE="$base"'
-    assert _between(py, start, end) == _between(text, start, end)
+    # The base a pull request is compared with is the same shell: both run one script.
+    run = 'run: bash "$RUNNER_TEMP/standards/tools/steps/code-rules.sh" '
+    assert run + "node\n" in text and run + "python\n" in py
+    assert "git fetch" not in text + py and "CODE_RULES_BASE=" not in text + py
 
 
 def _eslint(rel, code="no-unused-vars", message="'x' is unused.", line=1, col=1):

@@ -1,0 +1,19 @@
+# Take back the files a previous job's containers left in the workspace of a self-hosted runner, so that the
+# checkout that follows can replace them. The first step of a project's own job, before actions/checkout:
+#   steps:
+#     - uses: murphy360/standards/actions/take-ownership@v2
+#     - uses: actions/checkout@<commit SHA>  # <version>
+# On a GitHub-hosted runner it does nothing: every job there starts on a new machine.
+# The step is tools/steps/take-ownership.sh, the one the check workflows run. An action finds its own files through
+# github.action_path, so the script and the alpine image it names are those of the ref the project pinned.
+name: take-ownership
+description: On a self-hosted runner, take back the files a previous job's containers left in the workspace. Call it before actions/checkout.
+runs:
+  using: composite
+  steps:
+    - name: Take ownership of the previous job's files (a self-hosted runner)
+      if: runner.environment == 'self-hosted'
+      shell: sh
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: sh "$ACTION_PATH/../../tools/steps/take-ownership.sh"
