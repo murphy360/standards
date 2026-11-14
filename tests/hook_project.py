@@ -121,7 +121,9 @@ def compare(
             f"the hook exited {hook.returncode} and the tool {tool.returncode}; "
             "both fail this project with 1"
         )
-    if tool.stdout.strip() not in hook.stdout:
+    if not tool.stdout.strip():
+        problems.append(f"the tool printed nothing (is ruff installed?): {tool.stderr}")
+    elif tool.stdout.strip() not in hook.stdout:
         problems.append(
             f"the hook did not print what `tools/code_rules.py {' '.join(args)}` "
             "prints:\n" + tool.stdout
