@@ -110,9 +110,9 @@ def test_ci_calls_every_reusable_workflow_this_repository_ships():
     shipped = reusable()
     assert {"node-lint.yml", "test-docker.yml", "image.yml"} <= shipped
     missing = shipped - called(this_ci())
-    assert (
-        not missing
-    ), f"ci.yml has no job for {sorted(missing)}: add a fixture and one"
+    assert not missing, (
+        f"ci.yml has no job for {sorted(missing)}: add a fixture and one"
+    )
 
 
 def test_ci_uses_every_action_this_repository_ships():
@@ -121,9 +121,9 @@ def test_ci_uses_every_action_this_repository_ships():
     shipped = actions()
     assert {"checks", "take-ownership"} <= shipped
     missing = shipped - used(this_ci())
-    assert (
-        not missing
-    ), f"no step of ci.yml uses {sorted(missing)}: add `uses: ./actions/<name>`"
+    assert not missing, (
+        f"no step of ci.yml uses {sorted(missing)}: add `uses: ./actions/<name>`"
+    )
     stray = [p for p in ACTIONS.rglob("action.y*ml") if p.parent.parent != ACTIONS]
     assert not stray, "an action is a directory directly under actions/"
 
