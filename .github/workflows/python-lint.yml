@@ -96,9 +96,7 @@ jobs:
           echo "standards tools: $repository@$(git -C standards rev-parse HEAD) (${WORKFLOW_REF:-standards-ref $ref})"
       - name: Take ownership of the previous job's files (a self-hosted runner)
         if: runner.environment == 'self-hosted'
-        run: |
-          image="$(sh "$RUNNER_TEMP/standards/tools/image-ref.sh" alpine)"
-          docker run --rm -v "$GITHUB_WORKSPACE:/w" "$image" chown -R "$(id -u):$(id -g)" /w
+        run: sh "$RUNNER_TEMP/standards/tools/steps/take-ownership.sh"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
@@ -118,52 +116,4 @@ jobs:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           BEFORE: ${{ github.event.before }}
-        run: |
-          tool="$RUNNER_TEMP/standards/tools/code_rules.py"
-          args=()
-          [ "$FORMAT_CHECK" = true ] || args+=(--no-format)
-          [ "$SILENCERS" != true ] || args+=(--silencers)
-          read -r -a paths <<< "$PATHS"
-          [ ${#paths[@]} -eq 0 ] || args+=(--paths "${paths[@]}")
-          case "$MODE" in
-            all | changed) ;;
-            *) echo "::error::mode is all or changed, not '$MODE'"; exit 1 ;;
-          esac
-          base=""
-          if [ "$EVENT" = pull_request ]; then
-            # The merge commit the job checked out says what the pull request was merged with: its first parent.
-            # The base branch may have moved on since; comparing with it would count files this PR never touched.
-            parents=$(git cat-file -p HEAD | sed -n 's/^parent //p')
-            first=$(printf '%s\n' "$parents" | head -1)
-            if [ "$(printf '%s\n' "$parents" | grep -c .)" -eq 2 ] \
-              && git fetch --no-tags --depth=1 origin "$first"; then
-              base="$first"
-              echo "code rules base: $first, the first parent of the merge commit $(git rev-parse HEAD)"
-            else
-              base="$PR_BASE"
-              echo "code rules base: $base, the pull request's base (HEAD is not a merge commit, or its parent did not fetch)"
-              git fetch --no-tags --depth=1 origin "$base" || echo "::warning::could not fetch the base $base"
-            fi
-          elif [ "$EVENT" = push ] && [ -n "${BEFORE//0/}" ]; then
-            base="$BEFORE"  # all zeros: a new branch or tag, nothing before it
-            echo "code rules base: $base, the commit before the push"
-            git fetch --no-tags --depth=1 origin "$base" || echo "::warning::could not fetch the base $base"
-          fi
-          [ -z "$base" ] || export CODE_RULES_BASE="$base"
-          status=0
-          if [ "$MODE" = all ]; then
-            python3 "$tool" --all "${args[@]}" || status=$?
-          elif [ -z "$base" ]; then
-            echo "::notice::no base to compare with on a $EVENT event: every file is checked"
-            python3 "$tool" --all "${args[@]}" || status=$?
-          else
-            python3 "$tool" "${args[@]}" || status=$?
-          fi
-          if [ "$FORMAT_ONLY" = true ]; then
-            if [ "$EVENT" != pull_request ]; then
-              echo "::notice::format-only proves a pull request; this is a $EVENT event"
-            else
-              python3 "$tool" --format-only "${args[@]}" || status=$?
-            fi
-          fi
-          exit "$status"
+        run: bash "$RUNNER_TEMP/standards/tools/steps/code-rules.sh" python

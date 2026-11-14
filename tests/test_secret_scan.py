@@ -1,6 +1,7 @@
-"""secret-scan.yml and the gitleaks pre-commit hook.
+"""secret-scan.yml, the scan it runs and the gitleaks pre-commit hook.
 
-The scan step's shell is read out of the workflow and run on scratch repositories.
+The scan is ``tools/steps/secret-scan.sh``: the workflow's one step, and the
+secret-scan part of the ``checks`` action. It is run here on scratch repositories.
 Most tests put a stub ``docker`` first on the PATH, so they need neither Docker nor
 the network: they check which commits the step asks gitleaks for, and what it makes
 of gitleaks' answer. One test runs the real image on a commit that holds a
@@ -8,18 +9,22 @@ token-shaped string; it is skipped where the image is not already present, and i
 never pulls. The string is built at run time, so this file holds no secret.
 """
 
+import importlib
 import os
 import re
 import shutil
 import subprocess
-import textwrap
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+run_checks = importlib.import_module("run_checks")
 WORKFLOWS = ROOT / ".github" / "workflows"
 WORKFLOW = WORKFLOWS / "secret-scan.yml"
+SCRIPT = ROOT / "tools" / "steps" / "secret-scan.sh"  # the scan step
 PIN = ROOT / "tools" / "images" / "Dockerfile.gitleaks"  # where Dependabot moves it
 CONFIGS = (
     ROOT / ".pre-commit-config.yaml",
@@ -60,13 +65,6 @@ def fake_token() -> str:
     return "gh" + "p_" + "".join(ALPHABET[(i * 7 + 3) % 62] for i in range(36))
 
 
-def scan_script() -> str:
-    """The shell of the scan step, the last step of the workflow."""
-    lines = WORKFLOW.read_text().splitlines()
-    start = max(i for i, line in enumerate(lines) if line.strip() == "run: |")
-    return textwrap.dedent("\n".join(lines[start + 1 :])) + "\n"
-
-
 def git(root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args],
@@ -96,7 +94,7 @@ def repo(tmp_path) -> Path:
 
 
 class Scan:
-    """Runs the scan step in a repository, with a stub docker unless ``real``."""
+    """Runs the scan script in a repository, with a stub docker unless ``real``."""
 
     def __init__(self, tmp_path: Path):
         self.tmp = tmp_path
@@ -121,12 +119,8 @@ class Scan:
         }
         if not real:
             full["PATH"] = self.stub_path
-        tools = self.tmp / "runner" / "standards"  # where the workflow fetches them
-        tools.parent.mkdir(exist_ok=True)
-        if not tools.exists():
-            tools.symlink_to(ROOT, target_is_directory=True)
         return subprocess.run(
-            ["bash", "-c", scan_script()],
+            ["bash", str(SCRIPT)],
             cwd=root,
             env=full,
             capture_output=True,
@@ -148,12 +142,14 @@ def scan(tmp_path) -> Scan:
 
 def test_the_image_is_pinned_by_digest_and_named_once():
     assert len(IMAGE_RE.findall(PIN.read_text())) == 1
-    workflow = WORKFLOW.read_text()
-    assert "ghcr.io/gitleaks" not in workflow  # named in the pin file only
-    assert 'GITLEAKS_IMAGE="$(sh "$RUNNER_TEMP/standards/tools/image-ref.sh" ' in (
-        workflow
-    )
+    workflow, script = WORKFLOW.read_text(), SCRIPT.read_text()
+    assert "ghcr.io/gitleaks" not in workflow + script  # named in the pin file only
+    assert 'GITLEAKS_IMAGE="$(sh "$here/../image-ref.sh" gitleaks)"\n' in script
     assert "gitleaks-action" not in workflow  # that action wants a licence
+    # the workflow holds no shell of its own: its last step is the script
+    assert workflow.endswith(
+        '        run: bash "$RUNNER_TEMP/standards/tools/steps/secret-scan.sh"\n'
+    )
 
 
 def test_both_pre_commit_configs_pin_the_hook_at_the_workflows_version():
@@ -175,29 +171,32 @@ def test_the_workflow_has_the_shape_of_the_other_check_workflows():
     assert "permissions:\n  contents: read\n" in text
     assert re.search(r"^    timeout-minutes: \d+$", text, re.MULTILINE)
     assert "fetch-depth: 0" in text  # the range needs the history
-    assert "--redact" in scan_script()
-    assert "--verbose" not in scan_script()  # it prints the line that holds the secret
+    assert "--redact" in SCRIPT.read_text()
+    assert "--verbose" not in SCRIPT.read_text()  # it prints the line with the secret
 
 
-@pytest.mark.parametrize(
-    ("path", "uses"),
-    [
-        (WORKFLOWS / "ci.yml", "./.github/workflows/secret-scan.yml"),
-        (
-            ROOT / "templates" / "ci.yml",
-            "murphy360/standards/.github/workflows/secret-scan.yml@v2",
-        ),
-    ],
-)
-def test_ci_calls_the_workflow_and_result_needs_it(path, uses):
-    text = path.read_text()
+def test_ci_calls_the_workflow_and_result_needs_it():
+    text = (WORKFLOWS / "ci.yml").read_text()
+    uses = "./.github/workflows/secret-scan.yml"
     jobs = re.findall(
         rf"^  ([\w-]+):\n    uses: {re.escape(uses)}$", text, re.MULTILINE
     )
-    assert jobs, f"{path.name} calls {uses}"
+    assert jobs, f"ci.yml calls {uses}"
     needs = text.split("\n  result:\n", 1)[1].split("steps:", 1)[0]
     for job in jobs:
         assert re.search(rf"(?<![\w-]){re.escape(job)}(?![\w-])", needs), job
+
+
+def test_the_template_scans_in_its_checks_job_with_the_history():
+    """The checks action runs the scan by default, so the job fetches the history."""
+    text = (ROOT / "templates" / "ci.yml").read_text()
+    job = text.split("\n  checks:\n", 1)[1].split("\n  test:\n", 1)[0]
+    assert "      - uses: murphy360/standards/actions/checks@v2\n" in job
+    assert not re.search(r"^\s+checks:", job, re.MULTILINE)  # the default list
+    assert "secret-scan" in run_checks.DEFAULT.split()
+    assert re.search(r"^          fetch-depth: 0(\s|$)", job, re.MULTILINE)
+    needs = text.split("\n  result:\n", 1)[1].split("steps:", 1)[0]
+    assert "needs: [checks, " in needs
 
 
 # what is scanned: the commits of the change, or everything HEAD reaches
@@ -256,6 +255,18 @@ def test_without_a_base_or_on_request_the_whole_history_is_scanned(
     assert said in res.stdout
     assert "the whole history of" in res.stdout
     assert "2 commit(s)" in res.stdout
+
+
+def test_a_shallow_clone_is_refused_and_the_step_says_what_to_set(repo, scan, tmp_path):
+    """One commit of many: gitleaks would blame every file on it. The workflow
+    always fetches the history; a project's own checks job must ask for it."""
+    commit(repo, "a.py", "x = 1\n")
+    shallow = tmp_path / "shallow"
+    git(tmp_path, "clone", "-q", "--depth=1", f"file://{repo}", str(shallow))
+    res = scan.run(shallow, "push", BEFORE=ZEROS)
+    assert res.returncode == 2
+    assert "::error::" in res.stdout and "fetch-depth: 0" in res.stdout
+    assert not scan.args_file.exists()  # gitleaks was never asked
 
 
 def test_gitleaks_is_asked_to_redact_and_cannot_write_to_the_checkout(repo, scan):

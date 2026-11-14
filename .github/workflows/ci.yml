@@ -10,6 +10,8 @@
 # `types` runs type-check on this repository's own tools, `types-python` on a small project with a dependency to
 # install, and `types-node` runs the TypeScript half on the Node fixture.
 # `secret-scan` runs on the commits of the change and `secret-scan-history` on the whole history, so both are tried.
+# `checks` is the one job a project copies from templates/ci.yml: the same quick checks through the actions under
+# actions/, by local path, so a pull request proves its own actions.
 name: ci
 on:
   push:
@@ -99,6 +101,33 @@ jobs:
     uses: ./.github/workflows/secret-scan.yml
     with:
       full-history: true
+  # The quick checks in one job, as templates/ci.yml has them. The first `checks` step runs the five default checks
+  # on this repository. The second runs node-lint on the Node fixture, also when the first failed.
+  # In a project take-ownership is the first step, before the checkout. Here it is a local action, which is only
+  # there after the checkout. On a GitHub-hosted runner it does nothing in either place.
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0   # the secret scan reads the commits of the change
+      - uses: ./actions/take-ownership
+      - uses: ./actions/checks
+        with:
+          format-check: true
+          silencers: true
+          check-pr-template: true
+          check-pre-commit-config: true
+          check-ticket-template: true
+      - if: ${{ !cancelled() }}
+        uses: ./actions/checks
+        with:
+          checks: node-lint
+          working-directory: tests/fixtures/node-project
+          format-check: true
+          no-inline-config: true
+          silencers: true
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -128,7 +157,7 @@ jobs:
   result:
     name: result
     if: always()
-    needs: [lint, lint-changed, lint-pinned, shell, workflows, standards, node, test-docker, image, types, types-python, types-node, secret-scan, secret-scan-history, tests, hook]
+    needs: [lint, lint-changed, lint-pinned, shell, workflows, standards, node, test-docker, image, types, types-python, types-node, secret-scan, secret-scan-history, checks, tests, hook]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -14,7 +14,8 @@ It checks:
 * **Pinned actions**: every ``uses:`` of a third-party action is a full commit SHA (a
   comment may name the version).
   Local actions (``./``), ``docker://`` images with a digest, and
-  ``murphy360/standards`` at a version tag are allowed.
+  ``murphy360/standards`` at a version tag are allowed: its reusable workflows
+  and its actions (``murphy360/standards/actions/<name>@v2``).
 * **The instruction file** exists at the root: ``AGENTS.md``, the file every agent
   tool reads (from the standards' template), with or without a ``CLAUDE.md`` that
   imports it. A project that has only ``CLAUDE.md`` passes too.
@@ -59,8 +60,10 @@ from pathlib import Path
 
 USES_RE = re.compile(r'^\s*(?:-\s*)?uses:\s*["\']?([^\s"\'#]+)')
 SHA_RE = re.compile(r"@[0-9a-f]{40}$")
+# A reusable workflow or an action of the standard, at a version tag.
 STANDARDS_RE = re.compile(
-    r"^murphy360/standards/\.github/workflows/[\w.-]+\.ya?ml@v\d+(\.\d+){0,2}$"
+    r"^murphy360/standards/(\.github/workflows/[\w.-]+\.ya?ml|actions/[\w-]+)"
+    r"@v\d+(\.\d+){0,2}$"
 )
 INSTRUCTIONS = ("AGENTS.md", "CLAUDE.md")  # either is the instruction file
 GUARD_RE = re.compile(r"CLAUDE_PROJECT_DIR\}?[\"']?/(\.claude/[\w./-]*guard[\w.-]*)")

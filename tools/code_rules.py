@@ -105,7 +105,6 @@ FIXES = {
     "conftest.py, not in an import",
     "RUF100": "remove the `# noqa`: the standard allows none",
 }
-PARSE_RE = re.compile(r"Failed to parse (.+?):\d+:\d+:")
 BASE_ENV = "CODE_RULES_BASE"
 DEFAULT_BASE = "origin/main"
 OLD_BASELINE = "code_rules_baseline.json"
@@ -420,16 +419,13 @@ def unformatted(files: list[str], root: Path) -> list[str]:
             capture_output=True,
             text=True,
         )
-        broken = PARSE_RE.findall(res.stderr)
+        broken, ugly = ruff_version.format_check(res.stdout, res.stderr)
         if res.returncode not in (0, 1) and not broken:
             raise SystemExit(
                 f"code_rules: ruff format did not run ({res.stderr.strip()[:300]}); "
                 "pip install ruff"
             )
-        found += [Path(p).as_posix() for p in broken]
-        for line in res.stdout.splitlines():
-            if line.startswith("Would reformat: "):
-                found.append(Path(line.split(": ", 1)[1]).as_posix())
+        found += broken + ugly
     return sorted(set(found))
 
 

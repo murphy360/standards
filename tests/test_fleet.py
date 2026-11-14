@@ -324,6 +324,7 @@ def test_summary_counts_adopters_by_ref_and_the_repositories_outside():
         "older": 1,  # bravo
         "sha": 1,  # alpha: one call at a commit
         "other": 0,
+        "one_job": 0,  # none runs the checks in one job (test_checks_action.py)
         "outside_with_topic": 1,  # delta
         "outside_without_topic": 1,  # echo
     }

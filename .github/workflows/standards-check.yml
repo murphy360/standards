@@ -80,9 +80,7 @@ jobs:
           echo "standards tools: $repository@$(git -C standards rev-parse HEAD) (${WORKFLOW_REF:-standards-ref $ref})"
       - name: Take ownership of the previous job's files (a self-hosted runner)
         if: runner.environment == 'self-hosted'
-        run: |
-          image="$(sh "$RUNNER_TEMP/standards/tools/image-ref.sh" alpine)"
-          docker run --rm -v "$GITHUB_WORKSPACE:/w" "$image" chown -R "$(id -u):$(id -g)" /w
+        run: sh "$RUNNER_TEMP/standards/tools/steps/take-ownership.sh"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
@@ -95,24 +93,4 @@ jobs:
           CHECK_TEMPLATES: ${{ inputs.check-templates }}
           CHECK_AGENT_SETTINGS: ${{ inputs.check-agent-settings }}
           CHECK_RUFF_VERSION: ${{ inputs.check-ruff-version }}
-        run: |
-          args=()
-          if [ "$CHECK_PR_TEMPLATE" = "true" ]; then
-            args+=(--require-pr-template)
-          fi
-          if [ "$CHECK_PRE_COMMIT_CONFIG" = "true" ]; then
-            args+=(--require-pre-commit)
-          fi
-          if [ "$CHECK_TICKET_TEMPLATE" = "true" ]; then
-            args+=(--require-ticket-template)
-          fi
-          if [ "$CHECK_TEMPLATES" = "true" ]; then
-            args+=(--require-current-templates)
-          fi
-          if [ "$CHECK_AGENT_SETTINGS" = "true" ]; then
-            args+=(--require-agent-settings)
-          fi
-          if [ "$CHECK_RUFF_VERSION" = "true" ]; then
-            args+=(--require-one-ruff-version)
-          fi
-          python3 "$RUNNER_TEMP/standards/tools/check_standards.py" "${args[@]}"
+        run: bash "$RUNNER_TEMP/standards/tools/steps/standards-check.sh"

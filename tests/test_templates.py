@@ -333,23 +333,20 @@ def test_overwrite_needs_all_and_the_checkout_must_exist(tmp_path):
 
 
 def test_the_workflow_passes_check_templates_to_the_tool(tmp_path):
-    """The last step's shell, as the workflow holds it, against the real tools."""
+    """The last step's script, as the workflow runs it, against the real tools."""
     text = (ROOT / ".github" / "workflows" / "standards-check.yml").read_text()
     declared = text.split("      check-templates:\n", 1)[1].splitlines()[:2]
     assert [line.strip() for line in declared] == ["type: boolean", "default: false"]
     assert "CHECK_TEMPLATES: ${{ inputs.check-templates }}" in text
-    step = text.split("- name: Does this repository follow the standards?\n", 1)[1]
-    lines = step.split("run: |\n", 1)[1].splitlines()
-    shell = "\n".join(line[10:] for line in lines) + "\n"
-    temp = tmp_path / "runner-temp"
-    temp.mkdir()
-    (temp / "standards").symlink_to(ROOT, target_is_directory=True)
+    assert text.endswith(
+        'run: bash "$RUNNER_TEMP/standards/tools/steps/standards-check.sh"\n'
+    )
     root = project(tmp_path, {"CLAUDE.md": claude(old())})
-    env = {"PATH": os.environ["PATH"], "RUNNER_TEMP": str(temp)}
+    env = {"PATH": os.environ["PATH"]}
     results = {}
     for on in ("false", "true"):
         results[on] = subprocess.run(
-            ["bash", "-e", "-c", shell],
+            ["bash", str(ROOT / "tools" / "steps" / "standards-check.sh")],
             cwd=root,
             env={**env, "CHECK_TEMPLATES": on},
             capture_output=True,
@@ -362,7 +359,7 @@ def test_the_workflow_passes_check_templates_to_the_tool(tmp_path):
 
 def test_the_ci_template_names_the_input():
     text = (ROOT / "templates" / "ci.yml").read_text()
-    assert "#   check-templates: true" in text
+    assert "# check-templates: true" in text
 
 
 def test_the_rehearsal_runs_the_template_check_an_adopter_turned_on(tmp_path):

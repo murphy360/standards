@@ -27,7 +27,7 @@ repos:
   # the format, on every tracked file. pre-commit builds the hook with its own pinned ruff: nothing to install.
   # Move the rev to the release's commit when the standard releases, so that the hook and CI hold the same rules.
   - repo: https://github.com/murphy360/standards
-    rev: d794439b4a0d6fdfcd713001da9582e977676c42  # main after v2.2.0: the hook (#45) and the config rules (#21)
+    rev: 35961d07ddb3b525bb4088d4c046f471a11ed80d  # v2.3.0
     hooks:
       - id: code-rules
         # args: [--all, --project-ruff]  # with `project-ruff: true` on the lint job: the ruff the project pins

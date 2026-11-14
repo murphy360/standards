@@ -70,6 +70,15 @@ RUFF_HOOKS_RE = re.compile(
 )
 HOOK_RE = re.compile(r"^(\s*)-\s*id:\s*[\"']?(code-rules(?:-node)?)[\"']?\s*(?:#.*)?$")
 LINT_WORKFLOWS = ("python-lint", "node-lint")
+# What `ruff format --check` prints for a file it would change or cannot parse. Older
+# releases: "Would reformat: <path>" and "error: Failed to parse <path>:1:2: ...".
+# Newer ones print a diagnostic, "unformatted: ..." or "invalid-syntax: ...", and on
+# the next line " --> <path>:1:2".
+REFORMAT_RE = re.compile(r"^Would reformat: (.+?)\s*$", re.M)
+PARSE_RE = re.compile(r"Failed to parse (.+?):\d+:\d+:")
+DIAGNOSTIC_RE = re.compile(
+    r"^(unformatted|invalid-syntax): .*\n\s*--> (.+?):\d+:\d+", re.M
+)
 ONE_VERSION = (
     "Pin ruff once in requirements-dev.txt (`ruff==<version>`), pass `project-ruff: "
     "true` to the lint job and `--project-ruff` in the args of the code-rules hook, "
@@ -428,6 +437,15 @@ def main(argv=None) -> int:
         return 0
     pip = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check"]
     return subprocess.run([*pip, f"ruff=={version}"]).returncode
+
+
+def format_check(stdout: str, stderr: str) -> tuple[list[str], list[str]]:
+    """(the files that do not parse, the files it would re-format), in either style."""
+    text = f"{stdout}\n{stderr}"
+    broken, ugly = PARSE_RE.findall(text), REFORMAT_RE.findall(text)
+    for kind, path in DIAGNOSTIC_RE.findall(text):
+        (broken if kind == "invalid-syntax" else ugly).append(path)
+    return [Path(f).as_posix() for f in broken], [Path(f).as_posix() for f in ugly]
 
 
 if __name__ == "__main__":
