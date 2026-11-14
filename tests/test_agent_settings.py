@@ -616,8 +616,12 @@ def test_the_workflow_passes_its_input_to_the_tool():
     declared = text.split("      check-agent-settings:\n", 1)[1].splitlines()[:2]
     assert [line.strip() for line in declared] == ["type: boolean", "default: false"]
     assert "CHECK_AGENT_SETTINGS: ${{ inputs.check-agent-settings }}" in text
+    assert text.endswith(
+        'run: bash "$RUNNER_TEMP/standards/tools/steps/standards-check.sh"\n'
+    )
+    script = (ROOT / "tools" / "steps" / "standards-check.sh").read_text()
     assert (
         'if [ "$CHECK_AGENT_SETTINGS" = "true" ]; then\n'
-        "            args+=(--require-agent-settings)\n"
-    ) in text
+        "  args+=(--require-agent-settings)\n"
+    ) in script
     assert ("check-agent-settings", "--require-agent-settings") in rehearsal.CHECK_FLAGS

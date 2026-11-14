@@ -1,9 +1,10 @@
-"""This repository's CI runs every workflow it ships.
+"""This repository's CI runs every workflow and every action it ships.
 
 ci.yml calls each reusable workflow on this repository or on a small project in
-``tests/fixtures``, and ``result`` needs every job. These tests read the files only:
-they keep a new workflow from being added without its job, and keep the fixtures
-what the workflows are meant to meet.
+``tests/fixtures``, uses each action under ``actions/`` by its local path, and
+``result`` needs every job. These tests read the files only: they keep a new
+workflow or action from being added without its job, and keep the fixtures what the
+workflows are meant to meet.
 """
 
 import json
@@ -12,11 +13,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
+ACTIONS = ROOT / "actions"
 FIXTURES = ROOT / "tests" / "fixtures"
 NODE = FIXTURES / "node-project"
 DOCKER = FIXTURES / "docker-project"
 JOB_RE = re.compile(r"^  ([\w-]+):\s*$")
 USES_RE = re.compile(r"^\s+uses:\s*\./\.github/workflows/([\w.-]+)")
+ACTION_RE = re.compile(r"^\s+(?:- )?uses:\s*\./actions/([\w-]+)\s*(#.*)?$")
 NEEDS_RE = re.compile(r"^\s+needs:\s*\[(.*)\]")
 FIXTURE_PATH_RE = re.compile(r"tests/fixtures/[\w./-]+")
 
@@ -42,6 +45,12 @@ def called(jobs: dict[str, list[str]]) -> set[str]:
     return {hit.group(1) for hit in hits if hit}
 
 
+def used(jobs: dict[str, list[str]]) -> set[str]:
+    """The local actions the steps of the jobs use."""
+    hits = (ACTION_RE.match(line) for lines in jobs.values() for line in lines)
+    return {hit.group(1) for hit in hits if hit}
+
+
 def not_needed(jobs: dict[str, list[str]]) -> set[str]:
     """The jobs ``result`` does not wait for."""
     needs: set[str] = set()
@@ -58,6 +67,11 @@ def reusable() -> set[str]:
     }
 
 
+def actions() -> set[str]:
+    """The actions this repository ships: a directory under actions/ each."""
+    return {p.parent.name for p in ACTIONS.glob("*/action.y*ml")}
+
+
 def this_ci() -> dict[str, list[str]]:
     return ci_jobs((WORKFLOWS / "ci.yml").read_text())
 
@@ -71,6 +85,13 @@ jobs:
       mode: changed
   tests:
     runs-on: ubuntu-latest
+    steps:
+      - uses: ./actions/checks
+        with:
+          checks: shell-lint
+      - name: Later
+        uses: ./actions/take-ownership  # a comment
+      - uses: someone/actions/other@v1
   result:
     needs: [lint]
     runs-on: ubuntu-latest
@@ -81,6 +102,7 @@ def test_the_parser_finds_the_jobs_the_calls_and_a_job_result_forgot():
     jobs = ci_jobs(SAMPLE)
     assert list(jobs) == ["lint", "tests", "result"]
     assert called(jobs) == {"python-lint.yml"}
+    assert used(jobs) == {"checks", "take-ownership"}
     assert not_needed(jobs) == {"tests"}
 
 
@@ -91,6 +113,19 @@ def test_ci_calls_every_reusable_workflow_this_repository_ships():
     assert (
         not missing
     ), f"ci.yml has no job for {sorted(missing)}: add a fixture and one"
+
+
+def test_ci_uses_every_action_this_repository_ships():
+    """An action is tried by local path, so a pull request proves its own action.
+    The job that uses it is one ``result`` needs, as every job is (below)."""
+    shipped = actions()
+    assert {"checks", "take-ownership"} <= shipped
+    missing = shipped - used(this_ci())
+    assert (
+        not missing
+    ), f"no step of ci.yml uses {sorted(missing)}: add `uses: ./actions/<name>`"
+    stray = [p for p in ACTIONS.rglob("action.y*ml") if p.parent.parent != ACTIONS]
+    assert not stray, "an action is a directory directly under actions/"
 
 
 def test_result_needs_every_job():

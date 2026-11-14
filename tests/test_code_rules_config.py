@@ -543,15 +543,8 @@ def node_lint() -> str:
     return (ROOT / ".github" / "workflows" / "node-lint.yml").read_text()
 
 
-def node_lint_step() -> str:
-    """The shell of node-lint's "Code rules" step, as the workflow holds it."""
-    block = node_lint().split("- name: Code rules", 1)[1].split("run: |\n", 1)[1]
-    lines = []
-    for line in block.splitlines():
-        if line.strip() and not line.startswith(" " * 10):
-            break
-        lines.append(line[10:])
-    return "\n".join(lines) + "\n"
+# The shell of the "Code rules" step: node-lint.yml and the checks action run it.
+STEP = ROOT / "tools" / "steps" / "code-rules.sh"
 
 
 def test_node_lint_takes_no_inline_config_and_it_is_off_by_default():
@@ -560,8 +553,9 @@ def test_node_lint_takes_no_inline_config_and_it_is_off_by_default():
         "      no-inline-config: {type: boolean, default: false, description:" in text
     )
     assert "          NO_INLINE_CONFIG: ${{ inputs.no-inline-config }}\n" in text
+    assert text.endswith('tools/steps/code-rules.sh" node\n')
     assert '[ "$NO_INLINE_CONFIG" != true ] || args+=(--no-inline-config)' in (
-        node_lint_step()
+        STEP.read_text()
     )
     python_lint = (ROOT / ".github" / "workflows" / "python-lint.yml").read_text()
     assert "strict-config" not in text + python_lint  # the ruff part is simply on
@@ -569,19 +563,15 @@ def test_node_lint_takes_no_inline_config_and_it_is_off_by_default():
 
 @pytest.mark.parametrize("given, fails", [("true", True), ("false", False)])
 def test_the_node_lint_step_passes_the_option_to_the_tool(tmp_path, given, fails):
-    """The step's own shell, on a project whose ESLint is a script: no Node."""
+    """The step's own script, on a project whose ESLint is a script: no Node."""
     root = repo(tmp_path / "project", {"src/a.ts": DISABLED})
     args = fake_eslint(
         root, eslint_json(root, "src/a.ts", unused(2)) if fails else "[]"
     )
-    runner_temp = tmp_path / "runner-temp"
-    (runner_temp / "standards").mkdir(parents=True)
-    (runner_temp / "standards" / "tools").symlink_to(TOOLS)
     env = {
         "PATH": os.environ["PATH"],
         "HOME": str(tmp_path),
         "CI": "true",
-        "RUNNER_TEMP": str(runner_temp),
         "MODE": "all",
         "FORMAT_CHECK": "false",
         "NO_INLINE_CONFIG": given,
@@ -591,7 +581,7 @@ def test_the_node_lint_step_passes_the_option_to_the_tool(tmp_path, given, fails
         "BEFORE": "",
     }
     res = subprocess.run(
-        ["bash", "-e", "-c", node_lint_step()],
+        ["bash", str(STEP), "node"],
         cwd=root,
         env=env,
         capture_output=True,

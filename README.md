@@ -1,12 +1,15 @@
 # murphy360/standards
 
 The one standard every murphy360 project follows, so that no project rebuilds the same tooling. A project depends on
-it by calling its workflows at a pinned version tag (`@v2`), copying its templates, and keeping its rules.
+it by calling its actions and workflows at a pinned version tag (`@v2`), copying its templates, and keeping its
+rules.
 
 ## What is here
 
 | Path | What it is |
 |---|---|
+| `actions/checks` | the quick checks as one step of a project's own job: `standards-check`, the lint (`python-lint` or `node-lint`), `shell-lint`, `actionlint` and `secret-scan`, each the check the reusable workflow of that name runs, with the same inputs; `checks` names which run; every one runs, also after one failed, and the step fails at the end ("One job runs the quick checks", below) |
+| `actions/take-ownership` | the first step of a project's own job, before the checkout: on a self-hosted runner it takes back the files a previous job's containers left in the workspace; on a GitHub-hosted runner it does nothing |
 | `.github/workflows/standards-check.yml` | Fails a project that lacks a `.github/dependabot.yml` covering its ecosystems, pins an action to anything but a commit SHA, or has no instruction file (`AGENTS.md`, or a `CLAUDE.md` alone); `check-templates: true` also fails one whose copy of the shared text of `AGENTS.md` fell behind the template, whose `CLAUDE.md` does not import the `AGENTS.md` beside it, or whose CI has no job named `result` |
 | `.github/workflows/python-lint.yml` | ruff with the project's config plus the standard complexity limits, no `# noqa`, and the file-size limit (`tools/code_rules.py`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `ruff format --check` in the same scope; `paths` limits it to some directories; `format-only: true` proves a pull request only re-formats; `project-ruff: true` lints with the ruff the project pins |
 | `.github/workflows/node-lint.yml` | ESLint with the project's config plus the standard complexity limits, and the file-size limit (`tools/code_rules.py --eslint`), on every file (`mode: all`, the default) or on every file a change touches (`mode: changed`); `format-check: true` adds `prettier --check` in the same scope; `paths` limits it to some directories. Added in v2.2.0 |
@@ -17,6 +20,8 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `.github/workflows/test-docker.yml` | builds the project's image and runs its tests inside it |
 | `.github/workflows/image.yml` | multi-arch image (amd64 and arm64 on native runners) pushed to ghcr.io as one manifest list |
 | `tools/code_rules.py` | the code rules: `--all` checks that every file is clean; without it, every file a change touches; each finding printed with its line, rule and fix; `--eslint` adds the project's ESLint and `--prettier` adds `prettier --check`; `--silencers` checks that every skip, xfail, type ignore and the like carries its reason, and counts them. CI runs it, and a project runs it as a pre-commit hook |
+| `tools/run_checks.py` | what `actions/checks` runs: each check the step names, whatever the one before it did, then a line per check and the highest exit code; on GitHub a log group per check, an error annotation per failed check and a table in the job summary |
+| `tools/steps/` | the shell of each check step, one script each (`standards-check.sh`, `code-rules.sh`, `shell-lint.sh`, `actionlint.sh`, `secret-scan.sh`, `take-ownership.sh`): the reusable workflow and the action run the same file, and the tests run that file |
 | `tools/type_check.py` | the type check `type-check` runs: pyright, or the project's `tsc --noEmit` with `--language typescript`; it reads the checker's output and prints each finding the way `code_rules.py` does |
 | `.pre-commit-hooks.yaml` | the code rules as pre-commit hooks: `code-rules` is what `python-lint` runs and `code-rules-node` is what `node-lint` runs. pre-commit installs this repository (`pyproject.toml`: the modules under `tools/` and the pinned ruff) into the hook's own environment, so a project installs nothing |
 | `tools/check_standards.py` | the checks `standards-check` runs; six more (`--require-pr-template`, `--require-pre-commit`, `--require-ticket-template`, `--require-current-templates`, `--require-agent-settings`, `--require-one-ruff-version`) are opt-in |
@@ -26,7 +31,7 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `tools/agent_app.py` | gives each agent its own GitHub identity (a GitHub App): the link that creates it, a one-hour token, the commit author lines |
 | `tools/repo-settings.sh` | applies a repository's settings and its branch ruleset (below), and turns on GitHub's secret scanning and push protection where GitHub offers them; `--dry-run` prints what it would send |
 | `tools/fleet.py` | the fleet report: one row per repository, with the version of the standard it follows and what it lacks; `--run-tools <ref>` is the rehearsal before a release ("The fleet report", below) |
-| `templates/ci.yml` | a project's CI calling the workflows: one run per ref, a fixed-name `result` job to require |
+| `templates/ci.yml` | a project's CI: one `checks` job for the quick checks, the test and image workflows, one run per ref, a fixed-name `result` job to require |
 | `templates/eslint.config.mjs` | the ESLint config a TypeScript project starts from |
 | `templates/dependabot.yml` | Dependabot for actions, pip, docker and npm, weekly and grouped |
 | `templates/AGENTS.md` | the one instruction file, which every agent tool reads: how work arrives, worktrees, Docker tests, the definition of done; the shared text sits between two marker comments, so a tool can compare and rewrite it |
@@ -41,11 +46,17 @@ it by calling its workflows at a pinned version tag (`@v2`), copying its templat
 | `templates/rulesets/version-tags.json` | the tag ruleset `tools/repo-settings.sh` applies: only the owner can create, move or delete a `v*` tag |
 | `tests/fixtures/` | the three small projects (Node, Python, Docker) this repository's own CI runs `node-lint`, `python-lint` (with the newer ruff the Python project pins), `type-check`, `test-docker` and `image` on, so every workflow runs here before a tag moves |
 
+The five quick checks (standards-check, python-lint or node-lint, shell-lint, actionlint, secret-scan) exist twice:
+as one step of the project's own job, through `actions/checks`, and each as a reusable workflow, a job of its own. A
+project starts with the action ("One job runs the quick checks", below). The five workflows keep working through v2
+with the same inputs, and are removed in v3. type-check, test-docker and image stay workflows.
+
 The check workflows above (standards-check, python-lint, node-lint, type-check, shell-lint, actionlint, secret-scan) take `runs-on`: GitHub's
 `ubuntu-latest` by default, or a JSON list of labels for a self-hosted runner (`'["ci", "X64"]'`). A private
 project pays for hosted minutes, and each job is billed at least one minute however short, so a project with its own
 runners passes them here. The runner needs Docker; on a self-hosted one each job first takes ownership of files a
-previous job's containers left in the workspace.
+previous job's containers left in the workspace. A job that uses the actions is the project's own: it names its
+runner as any job does, and `actions/take-ownership` is its first step.
 
 The workflows that run a tool (standards-check, python-lint, node-lint, type-check) take the tool from the commit they were
 called at. A project at `@v2` runs the tools of `v2`, a project pinned at a commit runs the tools of that commit, and
@@ -53,7 +64,75 @@ this repository's own CI runs the tools of the pull request. GitHub names that c
 `job.workflow_sha`. The run prints it: `standards tools: murphy360/standards@<commit> (<workflow ref>)`. The tools are
 fetched into the runner's temp directory, so nothing is added to the project's workspace. The `standards-ref` input
 is deprecated and has no default: a project that still passes it keeps working, and it is read only if GitHub does
-not name the commit.
+not name the commit. An action needs none of this: GitHub downloads this repository at the ref the step names, and
+the action runs the tools beside it.
+
+## One job runs the quick checks
+
+`templates/ci.yml` has one `checks` job. It is the project's own job, so it names its runner and its time limit, and
+its steps are the standard's actions:
+
+```yaml
+  checks:
+    runs-on: ubuntu-latest   # or [self-hosted, linux]: the job's own line, no JSON string
+    timeout-minutes: 15
+    steps:
+      - uses: murphy360/standards/actions/take-ownership@v2
+      - uses: actions/checkout@<commit SHA>  # <version>
+        with:
+          fetch-depth: 0     # the secret scan reads the commits of the change
+      - uses: murphy360/standards/actions/checks@v2
+        with:
+          format-check: true
+```
+
+- **What runs.** `checks` names the checks, separated by spaces, each by the name of the reusable workflow that runs
+  the same check. The default is `standards-check python-lint shell-lint actionlint secret-scan`. A JavaScript or
+  TypeScript project writes `node-lint` in place of `python-lint`; `node-lint` lints the project's Python files
+  too. A second lint, in another directory, is a second `checks` step with `checks: node-lint`, its own
+  `working-directory`, and `if: ${{ !cancelled() }}` so that it runs after a failure.
+- **Every check runs.** A check that fails does not stop the next one, and the step fails at the end, so one run
+  reports every tool's findings. Each check's output is a group of the step's log. The last lines say which passed
+  and which failed (`checks: FAILED, 2 of 5: python-lint, actionlint`), each failed check is an error annotation
+  that names its group, and the job summary holds the same table. The step's exit code is the highest of the
+  checks'. A name that is no check fails the step too, and the others still run.
+- **The inputs are the workflows'.** Same names and same defaults: `mode`, `paths`, `format-check`, `format-only`,
+  `working-directory`, `no-inline-config`, `silencers`, `project-ruff`, `ruff-version`, `python-version`,
+  `node-version`, the six `check-*` inputs of standards-check, `shellcheck-version`, `actionlint-version` and
+  `full-history`. Where this page says an input goes on `python-lint`, on `node-lint` or in `standards-check`'s
+  `with:`, the `checks` step takes it the same way. `working-directory` is the lint's: the other checks run in the
+  root of the checkout. There is no `runs-on` and no `standards-ref`.
+- **The tools are the pinned ref's.** An action finds its own files (`github.action_path`), so the step runs the
+  tools of the ref it names: nothing is fetched a second time, and nothing is added to the workspace.
+- **The checkout is the project's.** It fetches the whole history (`fetch-depth: 0`), because the secret scan
+  reads the commits of the change. A shallow checkout fails the secret scan, which says what to set.
+- **The runner needs** Docker, git and bash: shellcheck, actionlint and gitleaks run from their images.
+- **What stays a job of its own.** `type-check`, `test-docker` and `image` install or build, so each is still a
+  reusable workflow, and `result` needs them beside `checks`.
+
+A project that calls the five reusable workflows moves in one pull request. Replace the `standards`, `lint`,
+`shell`, `workflows` and `secret-scan` jobs by the `checks` job. Move each `with:` line as it is. Write a `runs-on`
+input as the job's own `runs-on`, and drop `standards-ref`. Name `checks` where a `needs:` named the five.
+
+### What a run costs
+
+A private repository is billed for each job, in whole minutes, rounded up. So a job that works for eight seconds
+costs a minute.
+
+| | Jobs | Measured | Billed |
+|---|---|---|---|
+| Before | `standards`, `lint`, `shell`, `workflows`, `secret-scan` | 8 s each: 40 s | 5 minutes |
+| After | `checks` | 9 s: 7 s for the step that runs the five checks, 2 s to set up and check out | 1 minute |
+| Both | `result` | 2 s | 1 minute |
+
+- **Measured.** One run on this repository, on GitHub's `ubuntu-latest`: the run of this change's pull request
+  (#56) at commit `ec56584`, which holds the five jobs and the `checks` job side by side. Each time is from the
+  start of a job or a step to its end, as GitHub's API reports it, without the wait for a runner. The `checks`
+  job here has one more step, which lints the Node fixture: 38 s that a project's job does not have, and that
+  the table leaves out. With it the job took 50 s.
+- **Arithmetic.** The billed minutes are counted from the rule above, one minute for each job under a minute. No
+  bill was read: this repository is public, and a public repository is billed nothing. For a private project that
+  runs these jobs it is 6 minutes a run before and 2 after. Its test and image jobs cost the same before and after.
 
 ## The rules
 
@@ -169,8 +248,8 @@ not name the commit.
   it lets the call through and says so. The branch ruleset is the real stop.
 - **Parallel agent work does not queue or collide.** `templates/ci.yml` runs one pipeline per ref: a pull request's
   superseded run is cancelled, so a second push never waits behind the first, and a push to main always finishes.
-  Every job carries a `timeout-minutes` (a job calling a reusable workflow cannot set its own, so the reusable
-  workflow's job carries it instead), so a stuck job no longer holds a runner for six hours. A single job named
+  Every job carries a `timeout-minutes` (`checks` sets its own; a job calling a reusable workflow cannot, so the
+  reusable workflow's job carries it instead), so a stuck job no longer holds a runner for six hours. A single job named
   `result` depends on the rest; it is the one check a ruleset requires, so a cancelled or skipped job elsewhere
   never leaves the required check missing. `templates/rulesets/main.json` and `tools/repo-settings.sh` turn this
   into branch protection: pull request required, linear history, no force push, `result` required, the owner can
@@ -211,8 +290,9 @@ not name the commit.
 A new Python project starts from the template repository, `gh repo create <name> --template
 murphy360/template-python`, which already holds the steps below. An existing project takes them by hand:
 
-1. Copy `templates/ci.yml` to `.github/workflows/ci.yml` and keep the jobs that apply. That is all the code rules
-   need: the lint job fetches the base it compares with.
+1. Copy `templates/ci.yml` to `.github/workflows/ci.yml` and keep the jobs that apply. Its `checks` job runs the
+   quick checks ("One job runs the quick checks", above). That is all the code rules need: the lint has the base
+   it compares with.
 2. Copy `templates/dependabot.yml` to `.github/dependabot.yml`; `standards-check` names any ecosystem left out.
 3. Copy `templates/AGENTS.md` to `AGENTS.md` and `templates/CLAUDE.md` to `CLAUDE.md`. In `AGENTS.md`, fill in
    the title and "This project", and keep the two marker comments: the text between them is the standard's
@@ -220,12 +300,12 @@ murphy360/template-python`, which already holds the steps below. An existing pro
 4. Copy `templates/pull_request_template.md` to `.github/pull_request_template.md`.
 5. Copy `templates/pre-commit-config.yaml` to `.pre-commit-config.yaml`; `pip install pre-commit && pre-commit
    install` once per checkout. It holds the code rules as a hook, so nothing else is installed: no ruff, and no
-   checkout of this repository. Turn the matching checks on in `standards-check`'s `with:` once both templates are
+   checkout of this repository. Turn the matching checks on in the `checks` step's `with:` once both templates are
    in (`check-pr-template: true`, `check-pre-commit-config: true`): they default off so a project pinned at `@v2`
    sees no new failure until it opts in.
 6. Pin every other action in the project's workflows to a commit SHA.
 7. See what is left: `pre-commit run --all-files`. The `code-rules` hook prints every finding CI would print.
-8. If anything is left, set `mode: changed` on the lint job, and `args: []` on the `code-rules` hook so that it
+8. If anything is left, set `mode: changed` on the `checks` step, and `args: []` on the `code-rules` hook so that it
    checks the same files: the ones the branch changes. The last line of each run counts what is left. Remove both
    when it reads zero.
 9. With `format-check: true`, Python files must be formatted too. Re-format everything once, in one `ruff format`
@@ -236,21 +316,22 @@ murphy360/template-python`, which already holds the steps below. An existing pro
     branch and tag rulesets (`templates/rulesets/main.json`,
     `templates/rulesets/version-tags.json`) applied to the repository.
 11. Copy `templates/ISSUE_TEMPLATE/` to `.github/ISSUE_TEMPLATE/` (`ticket.md` and `config.yml`), then set
-    `check-ticket-template: true` on `standards-check`. Give each milestone a RUN ORDER ("Tickets and milestones",
-    below).
+    `check-ticket-template: true` on the `checks` step. Give each milestone a RUN ORDER ("Tickets and
+    milestones", below).
 12. Copy `templates/claude/settings.json` to `.claude/settings.json` and `templates/claude/guard.py` to
     `.claude/guard.py`, and commit both: a Claude Code session started in the project then refuses the never-rules
     ("The rules", above). The guard needs `python3`. A project that already has a `.claude/settings.json` adds the
-    `deny` rules and the `PreToolUse` hook to its own. Then turn on `check-agent-settings: true` in
-    `standards-check`'s `with:`: it requires the settings file, its guard hook, and the guard file the hook names.
+    `deny` rules and the `PreToolUse` hook to its own. Then turn on `check-agent-settings: true` in the
+    `checks` step's `with:`: it requires the settings file, its guard hook, and the guard file the hook names.
 13. Pin ruff in the project, so that a new ruff arrives as one pull request of its own. Write `ruff==<version>` in
-    `requirements-dev.txt`, starting from the version the lint prints today. Set `project-ruff: true` on the lint
-    job and `args: [--all, --project-ruff]` on the `code-rules` hook, and set the `ruff-pre-commit` rev to the
+    `requirements-dev.txt`, starting from the version the lint prints today. Set `project-ruff: true` on the
+    `checks` step and `args: [--all, --project-ruff]` on the `code-rules` hook, and set the `ruff-pre-commit` rev to the
     commit of the same release. `templates/dependabot.yml` already watches pip, so Dependabot opens a pull request
     when ruff releases: CI lints it with the new release, and the fixes go in that pull request. Turn on
-    `check-ruff-version: true` in `standards-check`'s `with:`, which fails when those places disagree.
+    `check-ruff-version: true` on the same step, which fails when those places disagree.
 
-A JavaScript or TypeScript project calls `node-lint` instead of `python-lint`, or as a job of its own. Copy
+A JavaScript or TypeScript project names `node-lint` in `checks` in place of `python-lint`, or runs it as a second
+`checks` step in its own directory. Copy
 `templates/eslint.config.mjs` to `eslint.config.mjs`. Add `eslint`, `@eslint/js`, `typescript-eslint` and `prettier`
 to devDependencies and commit the lockfile. `npm ci` installs them, and Dependabot updates them. The same two modes
 apply, and `format-check: true` runs `prettier --check` on the same files. In `.pre-commit-config.yaml`, use the
@@ -432,8 +513,12 @@ every repository that calls the standard's workflows.
 workflows the repository calls and at which ref (`v2`, an older major, or a commit SHA), its lint mode, whether a
 caller passes `format-only`, the instruction file it has (`AGENTS.md`, `CLAUDE.md` or `both`), the other
 templates it has, whether a CI job is named `result`, whether the `main` ruleset is
-applied, and its open Dependabot pull requests with the age of the oldest. Under the table it counts the adopters at
-the current major, at an older major and at a commit SHA, and the repositories outside the standard. `--json` prints
+applied, and its open Dependabot pull requests with the age of the oldest. A repository that runs the checks in one
+job is an adopter like any other: the `checks` column shows the ref of its `checks` step, and each check the step
+names shows that ref in its own column, so the lint mode and `format-only` read the same for both ways of calling
+a check. Under the table it counts the adopters at
+the current major, at an older major and at a commit SHA, the adopters with the one `checks` job, and the
+repositories outside the standard. `--json` prints
 the same for a program, `--repo <name>` keeps one repository, and `--owner` names another owner. It needs `gh`,
 signed in.
 
@@ -447,7 +532,8 @@ fine.
 `--run-tools <ref>` is the rehearsal. It takes `tools/` and `templates/` of this checkout at `<ref>` (a tag, a branch or a commit),
 clones each adopter into a temporary directory, and runs the tools the way the adopter's workflows would:
 `code_rules.py --all` for a caller of `python-lint`, with its `format-check`, `paths` and `working-directory`, and
-`check_standards.py` for a caller of `standards-check`, with the checks it turned on. It prints pass or FAIL for
+`check_standards.py` for a caller of `standards-check`, with the checks it turned on. A `checks` step counts as a
+caller of each check it names, with the step's inputs. It prints pass or FAIL for
 each repository with the last line of each tool, deletes the clones, and exits 1 when a repository fails. `debt`
 is a failure of `code_rules.py --all` in a repository that lints in `mode: changed`: its pull requests check only
 the files they touch. Run it at the current tag first to see what fails already. `node-lint` is not rehearsed.

@@ -73,13 +73,13 @@ def test_the_manifest_offers_the_two_hooks_and_each_is_valid():
 def test_each_hook_runs_what_its_workflow_runs():
     assert hook("code-rules")["args"] == "[--all]"
     assert hook("code-rules-node")["args"] == "[--all, --eslint, --no-format]"
-    node_lint = (WORKFLOWS / "node-lint.yml").read_text()
-    assert "args=(--eslint --no-format)" in node_lint
-    assert 'python3 "$tool" --all "${args[@]}"' in node_lint
-    assert (
-        'python3 "$tool" --all "${args[@]}"'
-        in (WORKFLOWS / "python-lint.yml").read_text()
-    )
+    # one script holds the step of both lint workflows
+    step = (ROOT / "tools" / "steps" / "code-rules.sh").read_text()
+    assert "args=(--eslint --no-format)" in step
+    assert 'python3 "$tool" --all "${args[@]}"' in step
+    for workflow, language in (("node-lint", "node"), ("python-lint", "python")):
+        text = (WORKFLOWS / f"{workflow}.yml").read_text()
+        assert text.endswith(f'tools/steps/code-rules.sh" {language}\n'), workflow
 
 
 def test_each_entry_is_a_console_script_of_a_module_under_tools():

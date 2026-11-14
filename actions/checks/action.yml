@@ -1,0 +1,136 @@
+# The quick checks of a project as one step of the project's own job: standards-check, the lint (python-lint or
+# node-lint), shell-lint, actionlint and secret-scan. One runner and one checkout, where five reusable workflows
+# take five. The job is the project's, so it sets runs-on and timeout-minutes itself:
+#   jobs:
+#     checks:
+#       runs-on: ubuntu-latest
+#       timeout-minutes: 15
+#       steps:
+#         - uses: murphy360/standards/actions/take-ownership@v2   # a self-hosted runner's left-over files
+#         - uses: actions/checkout@<commit SHA>  # <version>
+#           with:
+#             fetch-depth: 0   # the secret scan reads the commits of the change
+#         - uses: murphy360/standards/actions/checks@v2
+#           with:
+#             format-check: true
+#
+# `checks` names what runs, each by the name of the reusable workflow it replaces. The default is the five a Python
+# project runs. A JavaScript or TypeScript project names node-lint in place of python-lint (it lints the project's
+# Python files too). A second lint in another directory is a second step with `checks: node-lint`, its own
+# `working-directory`, and `if: ${{ !cancelled() }}` so that it runs after a failure.
+#
+# Every check runs, also after one failed, and the step fails at the end: one run reports every tool's findings.
+# Each check's output is a group of the step's log. The last lines say which passed and which failed, a failed
+# check is an error annotation, and the job summary holds the same table (tools/run_checks.py).
+#
+# Every other input is an input of the reusable workflow that runs the same check, with the same name and the same
+# default (a test compares them). There is no runs-on and no standards-ref: the job names its runner, and an action
+# finds its own files through github.action_path, so the tools are those of the ref the project pinned.
+#
+# The runner needs Docker (shellcheck, actionlint and gitleaks run from their images) and git. The secret scan
+# needs the history: a shallow checkout fails it and says so.
+name: checks
+description: The quick checks of a murphy360 project in one step. Every check runs, and the step fails at the end if one failed.
+inputs:
+  checks:
+    description: "the checks to run, separated by spaces: standards-check, python-lint, node-lint, shell-lint, actionlint, secret-scan"
+    default: "standards-check python-lint shell-lint actionlint secret-scan"
+  python-version:
+    description: "the Python that runs the tools and ruff"
+    default: "3.12"
+  node-version:
+    description: "node-lint: the Node that runs the project's ESLint and Prettier"
+    default: "22"
+  working-directory:
+    description: "the lints: the directory they run in (the other checks run in the root of the checkout)"
+    default: "."
+  mode:
+    description: "the lints: all (every file must be clean) or changed (every file the change touches)"
+    default: "all"
+  paths:
+    description: "the lints: space-separated directories or files to check (default: every tracked file)"
+    default: ""
+  format-check:
+    description: "the lints: also check ruff format, or prettier for node-lint, in the same scope as mode"
+    default: "false"
+  format-only:
+    description: "python-lint: also prove that this pull request only re-formats Python files"
+    default: "false"
+  no-inline-config:
+    description: "node-lint: run ESLint with --no-inline-config, and fail on each eslint-disable comment"
+    default: "false"
+  silencers:
+    description: "the lints: a skip, an xfail, a type ignore, a pragma: no cover and a shellcheck disable each need a reason, .only fails, and the last line counts them"
+    default: "false"
+  ruff-version:
+    description: "the lints: one ruff release, by its version number; it wins over the project's pin (default: project-ruff decides)"
+    default: ""
+  project-ruff:
+    description: "the lints: lint with the ruff the project pins (ruff==<version> in its requirements*.txt or pyproject.toml), and with the standard's default when it pins none"
+    default: "false"
+  check-pr-template:
+    description: "standards-check: also require .github/pull_request_template.md"
+    default: "false"
+  check-pre-commit-config:
+    description: "standards-check: also require .pre-commit-config.yaml"
+    default: "false"
+  check-ticket-template:
+    description: "standards-check: also require an issue template in .github/ISSUE_TEMPLATE, *.md or *.yml"
+    default: "false"
+  check-templates:
+    description: "standards-check: also require the shared text of AGENTS.md or CLAUDE.md to be the template's, a CLAUDE.md beside an AGENTS.md to import it, and a CI job named result"
+    default: "false"
+  check-agent-settings:
+    description: "standards-check: also require .claude/settings.json with the guard hook, and the guard file it names"
+    default: "false"
+  check-ruff-version:
+    description: "standards-check: also require every ruff version the project names (its requirements, its pre-commit config, its lint) to be the same one"
+    default: "false"
+  shellcheck-version:
+    description: "shell-lint: another shellcheck release, by its tag (default: the release tools/images/Dockerfile.shellcheck pins by digest)"
+    default: ""
+  actionlint-version:
+    description: "actionlint: another actionlint release, by its tag (default: the release tools/images/Dockerfile.actionlint pins by digest)"
+    default: ""
+  full-history:
+    description: "secret-scan: scan every commit HEAD reaches, not only the commits of this change"
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+      with:
+        python-version: ${{ inputs.python-version }}
+    - if: contains(inputs.checks, 'node-lint')
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+      with:
+        node-version: ${{ inputs.node-version }}
+    # Each input reaches the step script that reads it under the name the reusable workflow gives it. The scripts
+    # are tools/steps/*.sh, the ones the reusable workflows run, so the two cannot differ.
+    - name: The checks, each one run, then one result
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        CHECKS: ${{ inputs.checks }}
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        MODE: ${{ inputs.mode }}
+        PATHS: ${{ inputs.paths }}
+        FORMAT_CHECK: ${{ inputs.format-check }}
+        FORMAT_ONLY: ${{ inputs.format-only }}
+        NO_INLINE_CONFIG: ${{ inputs.no-inline-config }}
+        SILENCERS: ${{ inputs.silencers }}
+        CODE_RULES_RUFF_VERSION: ${{ inputs.ruff-version }}  # read by tools/ruff_version.py and tools/code_rules.py
+        CODE_RULES_PROJECT_RUFF: ${{ inputs.project-ruff }}
+        CHECK_PR_TEMPLATE: ${{ inputs.check-pr-template }}
+        CHECK_PRE_COMMIT_CONFIG: ${{ inputs.check-pre-commit-config }}
+        CHECK_TICKET_TEMPLATE: ${{ inputs.check-ticket-template }}
+        CHECK_TEMPLATES: ${{ inputs.check-templates }}
+        CHECK_AGENT_SETTINGS: ${{ inputs.check-agent-settings }}
+        CHECK_RUFF_VERSION: ${{ inputs.check-ruff-version }}
+        SHELLCHECK_VERSION: ${{ inputs.shellcheck-version }}
+        ACTIONLINT_VERSION: ${{ inputs.actionlint-version }}
+        FULL_HISTORY: ${{ inputs.full-history }}
+        EVENT: ${{ github.event_name }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+        BEFORE: ${{ github.event.before }}
+      run: python3 "$ACTION_PATH/../../tools/run_checks.py"

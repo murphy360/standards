@@ -235,11 +235,14 @@ def test_workflow_input_is_off_by_default_and_passes_the_flag():
     # Passed the way the other opt-in checks are: through the environment, never
     # written into the script.
     assert "CHECK_TICKET_TEMPLATE: ${{ inputs.check-ticket-template }}" in text
-    script = text.split("run: |")[-1]
+    assert text.endswith(
+        'run: bash "$RUNNER_TEMP/standards/tools/steps/standards-check.sh"\n'
+    )
+    script = (ROOT / "tools" / "steps" / "standards-check.sh").read_text()
     assert "inputs." not in script
     assert re.search(
         r'if \[ "\$CHECK_TICKET_TEMPLATE" = "true" \]; then\n'
-        r"\s+args\+=\(--require-ticket-template\)\n\s+fi\n",
+        r"\s+args\+=\(--require-ticket-template\)\n\s*fi\n",
         script,
     )
 

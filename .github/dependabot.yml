@@ -1,12 +1,13 @@
-# This repository's own updates: the pinned actions in its workflows (every project that calls them gets the update
-# by moving to the next tag of this repository), the default ruff (pyproject.toml), the images the workflows run
-# (tools/images), and the small projects in tests/fixtures that ci.yml runs python-lint, node-lint, type-check,
-# test-docker and image on. An update there is how a new ruff, ESLint, Prettier or base image is tried here first.
+# This repository's own updates: the pinned actions in its workflows and in its own actions under actions/ (every
+# project that calls them gets the update by moving to the next tag of this repository), the default ruff
+# (pyproject.toml), the images the workflows run (tools/images), and the small projects in tests/fixtures that
+# ci.yml runs python-lint, node-lint, type-check, test-docker and image on. An update there is how a new ruff,
+# ESLint, Prettier or base image is tried here first.
 # AGENTS.md says what a pull request from Dependabot needs here before it is merged.
 version: 2
 updates:
-  - package-ecosystem: github-actions
-    directory: /
+  - package-ecosystem: github-actions   # "/" is .github/workflows; each action.yml is read in its own directory
+    directories: ["/", "/actions/*"]
     schedule: {interval: weekly}
     groups:
       actions: {patterns: ["*"]}

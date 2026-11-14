@@ -14,7 +14,8 @@ fleet.py finds the adopters; this module does the rest. For each adopter it:
    ``project-ruff`` and ``ruff-version``. Without the last two the ruff on PATH
    runs, so install the standard's default (``ruff_version.py --install``).
    A repository that calls ``standards-check`` gets ``check_standards.py``, with
-   the opt-in checks it turned on;
+   the opt-in checks it turned on. A step that uses the ``checks`` action counts
+   as a caller of each check it names, with the step's inputs (``fleet.py``);
 4. prints pass or FAIL, and the last line of each tool;
 5. deletes the clone. The temporary directory goes when the run ends, however
    it ends.

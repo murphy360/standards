@@ -714,16 +714,9 @@ def test_this_repository_has_the_flag_on_and_every_silencer_here_has_its_reason(
     assert count >= 2  # at least this file's own mark and image.yml's directive
 
 
-def step(workflow: str) -> str:
-    """The shell of a lint workflow's "Code rules" step, as the workflow holds it."""
-    text = (WORKFLOWS / workflow).read_text()
-    block = text.split("- name: Code rules", 1)[1].split("run: |\n", 1)[1]
-    lines = []
-    for line in block.splitlines():
-        if line.strip() and not line.startswith(" " * 10):
-            break
-        lines.append(line[10:])
-    return "\n".join(lines) + "\n"
+# The shell of the "Code rules" step: the lint workflows and the checks action run it.
+STEP = ROOT / "tools" / "steps" / "code-rules.sh"
+LANGUAGE = {"python-lint.yml": "python", "node-lint.yml": "node"}
 
 
 @pytest.mark.parametrize("workflow", ["python-lint.yml", "node-lint.yml"])
@@ -731,7 +724,9 @@ def test_both_lint_workflows_take_the_input_and_it_is_off_by_default(workflow):
     text = (WORKFLOWS / workflow).read_text()
     assert "\n      silencers: {type: boolean, default: false, description:" in text
     assert "          SILENCERS: ${{ inputs.silencers }}\n" in text
-    assert '[ "$SILENCERS" != true ] || args+=(--silencers)\n' in step(workflow)
+    run = f'tools/steps/code-rules.sh" {LANGUAGE[workflow]}\n'
+    assert text.endswith(run)  # the step is the script, and nothing after it
+    assert '[ "$SILENCERS" != true ] || args+=(--silencers)\n' in STEP.read_text()
 
 
 @pytest.mark.parametrize("workflow", ["python-lint.yml", "node-lint.yml"])
@@ -739,7 +734,7 @@ def test_both_lint_workflows_take_the_input_and_it_is_off_by_default(workflow):
     "given, fails", [("true", True), ("false", False), ("", False)]
 )
 def test_the_step_passes_the_flag_to_the_tool(tmp_path, workflow, given, fails):
-    """The step's own shell. No Python file, so no ruff; ESLint is a script: no Node."""
+    """The step's own script. No Python file, so no ruff; ESLint is a script."""
     root = repo(
         tmp_path / "project", {"run.sh": UNQUOTED, "a.test.ts": "it.only('a');\n"}
     )
@@ -747,14 +742,10 @@ def test_the_step_passes_the_flag_to_the_tool(tmp_path, workflow, given, fails):
     eslint.parent.mkdir(parents=True)
     eslint.write_text("#!/bin/sh\necho '[]'\n")
     eslint.chmod(0o755)
-    runner_temp = tmp_path / "runner-temp"
-    (runner_temp / "standards").mkdir(parents=True)
-    (runner_temp / "standards" / "tools").symlink_to(TOOLS)
     env = {
         "PATH": os.environ["PATH"],
         "HOME": str(tmp_path),
         "CI": "true",
-        "RUNNER_TEMP": str(runner_temp),
         "MODE": "all",
         "FORMAT_CHECK": "false",
         "FORMAT_ONLY": "false",
@@ -766,7 +757,7 @@ def test_the_step_passes_the_flag_to_the_tool(tmp_path, workflow, given, fails):
         "BEFORE": "",
     }
     res = subprocess.run(
-        ["bash", "-e", "-c", step(workflow)],
+        ["bash", str(STEP), LANGUAGE[workflow]],
         cwd=root,
         env=env,
         capture_output=True,
@@ -780,8 +771,10 @@ def test_the_step_passes_the_flag_to_the_tool(tmp_path, workflow, given, fails):
 
 def test_the_template_and_the_readme_carry_the_flag():
     template = (ROOT / "templates" / "ci.yml").read_text()
-    assert "\n      # silencers: true  # " in template  # a commented line: opt-in
-    assert "\n  #     # silencers: true " in template  # and in the node job
+    assert "\n          # silencers: true  # " in template  # a commented line: opt-in
+    assert (
+        "node-lint: a `.skip` in a test" in template
+    )  # and what it means for node-lint
     readme = (ROOT / "README.md").read_text()
     assert "- **Every silencer carries its reason.**" in readme
     assert "`--silencers`" in readme and "`silencers: true`" in readme

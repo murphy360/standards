@@ -356,7 +356,7 @@ def test_the_lint_workflows_name_no_version_and_ask_the_tool(name):
     ]
     install = 'run: python3 "$RUNNER_TEMP/standards/tools/ruff_version.py" --install\n'
     assert text.count(install) == 1 and "pip install" not in text
-    lint = 'tool="$RUNNER_TEMP/standards/tools/code_rules.py"\n'
+    lint = 'run: bash "$RUNNER_TEMP/standards/tools/steps/code-rules.sh" '
     assert text.index(STEP) < text.index(install) < text.index(lint)
 
 
@@ -594,7 +594,7 @@ def test_the_hooks_take_the_flags_and_the_rehearsal_passes_them():
     assert "        # args: [--all, --project-ruff]  # with `project-ruff: true`" in (
         template
     )
-    assert "      # project-ruff: true  # lint with the ruff the project pins" in (
+    assert "          # project-ruff: true  # lint with the ruff the project pins" in (
         (ROOT / "templates" / "ci.yml").read_text()
     )
     given = {"project-ruff": "true", "ruff-version": "0.9.2"}
@@ -675,7 +675,8 @@ def test_the_script_refuses_an_unknown_image_and_one_without_a_digest(tmp_path):
 def test_no_workflow_names_an_image_itself():
     """A `run:` step is not a place Dependabot reads: the image comes from the
     script, and `test-image` is the image the project's own job just built."""
-    for path in sorted(WORKFLOWS.glob("*.yml")):
+    steps = sorted((TOOLS / "steps").glob("*.sh"))  # the shell of the check steps
+    for path in [*sorted(WORKFLOWS.glob("*.yml")), *steps]:
         text = path.read_text()
         for line in text.splitlines():
             if "docker run" not in line or line.lstrip().startswith("#"):
@@ -687,6 +688,11 @@ def test_no_workflow_names_an_image_itself():
 
 
 def test_the_ownership_step_reads_alpine_after_the_tools_are_fetched():
+    script = (TOOLS / "steps" / "take-ownership.sh").read_text()
+    assert 'image="$(sh "$here/../image-ref.sh" alpine)"\n' in script, (
+        "the script that takes ownership reads alpine from "
+        "tools/images/Dockerfile.alpine, through tools/image-ref.sh"
+    )
     with_step = [
         p for p in sorted(WORKFLOWS.glob("*.yml")) if OWNERSHIP in p.read_text()
     ]
@@ -694,12 +700,9 @@ def test_the_ownership_step_reads_alpine_after_the_tools_are_fetched():
     for path in with_step:
         text = path.read_text()
         step = text.split(OWNERSHIP, 1)[1].split("\n      - ", 1)[0]
-        assert 'image="$(sh "$RUNNER_TEMP/standards/tools/image-ref.sh" alpine)"' in (
+        assert 'run: sh "$RUNNER_TEMP/standards/tools/steps/take-ownership.sh"' in (
             step
-        ), (
-            f"{path.name}: the step that takes ownership reads alpine from "
-            "tools/images/Dockerfile.alpine, through tools/image-ref.sh"
-        )
+        ), f"{path.name}: the step that takes ownership is the one script"
         assert (
             text.index(STEP) < text.index(OWNERSHIP) < text.index("actions/checkout@")
         ), f"{path.name}: the tools are fetched first, then ownership, then checkout"
@@ -716,10 +719,10 @@ def test_a_version_input_still_reaches_the_image(workflow, name, given):
     text = (WORKFLOWS / f"{workflow}.yml").read_text()
     assert f'      {given}: {{type: string, default: "", description:' in text
     assert f"          VERSION: ${{{{ inputs.{given} }}}}\n" in text
-    asked = (
-        f'image="$(sh "$RUNNER_TEMP/standards/tools/image-ref.sh" {name} "$VERSION")"'
-    )
-    assert asked in text
+    run = f'run: bash "$RUNNER_TEMP/standards/tools/steps/{workflow}.sh" "$VERSION"\n'
+    assert text.endswith(run)
+    script = (TOOLS / "steps" / f"{workflow}.sh").read_text()
+    assert f'image="$(sh "$here/../image-ref.sh" {name} "${{1:-}}")"\n' in script
 
 
 def hook_release(config: Path, repo: str, pattern: str) -> str:
@@ -936,24 +939,21 @@ def test_the_check_is_off_until_a_project_turns_it_on(tmp_path, capsys):
 
 
 def test_the_workflow_passes_check_ruff_version_to_the_tool(tmp_path):
-    """The last step's shell, as the workflow holds it, against the real tools."""
+    """The last step's script, as the workflow runs it, against the real tools."""
     text = (WORKFLOWS / "standards-check.yml").read_text()
     declared = text.split("      check-ruff-version:\n", 1)[1].splitlines()[:2]
     assert [line.strip() for line in declared] == ["type: boolean", "default: false"]
     assert "CHECK_RUFF_VERSION: ${{ inputs.check-ruff-version }}" in text
-    step = text.split("- name: Does this repository follow the standards?\n", 1)[1]
-    lines = step.split("run: |\n", 1)[1].splitlines()
-    shell = "\n".join(line[10:] for line in lines) + "\n"
-    temp = tmp_path / "runner-temp"
-    temp.mkdir()
-    (temp / "standards").symlink_to(ROOT, target_is_directory=True)
+    assert text.endswith(
+        'run: bash "$RUNNER_TEMP/standards/tools/steps/standards-check.sh"\n'
+    )
     files = {**AGREEING, ".github/workflows/ci.yml": lint_job()}
     root = project(tmp_path / "project", files)
-    env = {"PATH": os.environ["PATH"], "RUNNER_TEMP": str(temp)}
+    env = {"PATH": os.environ["PATH"]}
     results = {}
     for on in ("false", "true"):
         results[on] = subprocess.run(
-            ["bash", "-e", "-c", shell],
+            ["bash", str(TOOLS / "steps" / "standards-check.sh")],
             cwd=root,
             env={**env, "CHECK_RUFF_VERSION": on},
             capture_output=True,
@@ -962,7 +962,7 @@ def test_the_workflow_passes_check_ruff_version_to_the_tool(tmp_path):
     assert results["false"].returncode == 0, results["false"].stderr
     assert results["true"].returncode == 1, results["true"].stderr
     assert "ruff is not one version here" in results["true"].stdout
-    assert "#   check-ruff-version: true" in (ROOT / "templates" / "ci.yml").read_text()
+    assert "# check-ruff-version: true" in (ROOT / "templates" / "ci.yml").read_text()
     assert ("check-ruff-version", "--require-one-ruff-version") in (
         fleet_rehearsal.CHECK_FLAGS
     )

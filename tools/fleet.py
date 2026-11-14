@@ -9,7 +9,9 @@ It lists the owner's repositories that are not archived. For each one it prints:
 
 * the ``murphy360/standards`` workflows it calls, and at which ref: the current
   major tag (``v2``), an older major, or a commit SHA (shown by its first seven
-  characters);
+  characters). A repository that runs the checks in one job, through the
+  ``checks`` action, has that ref under ``checks`` and under each check the step
+  names, so ``python-lint`` reads the same for both ways of calling it;
 * the lint mode (``all`` or ``changed``) and whether a caller passes
   ``format-only``;
 * which templates it has: the instruction file by its name (``AGENTS.md``,
@@ -22,7 +24,8 @@ It lists the owner's repositories that are not archived. For each one it prints:
   repository says it stays outside the standard: no list of names is kept here.
 
 A summary follows: adopters at the current major, at an older major, at a commit
-SHA, and repositories outside the standard without the topic.
+SHA, adopters with the one ``checks`` job, and repositories outside the standard
+without the topic.
 
 ``--run-tools <ref>`` is the rehearsal before a release (fleet_rehearsal.py). It
 clones each adopter, runs ``code_rules.py --all`` and ``check_standards.py`` from
@@ -46,6 +49,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import fleet_rehearsal
+import run_checks
 
 ROOT = Path(__file__).resolve().parents[1]
 STANDARDS = "murphy360/standards"
@@ -96,6 +100,12 @@ CALL_RE = re.compile(
     re.IGNORECASE,
 )
 LOCAL_RE = re.compile(r"\./\.github/workflows/([\w.-]+)\.ya?ml$")
+ACTION_RE = re.compile(
+    re.escape(STANDARDS) + r"/actions/([\w-]+)@(\S+)$", re.IGNORECASE
+)
+LOCAL_ACTION_RE = re.compile(r"\./actions/([\w-]+)/?$")
+STEP_RE = re.compile(r"^( *)- +(.*)$")
+CHECKS_ACTION = "checks"  # the action that runs the checks in one job
 VERSION_RE = re.compile(r"v(\d+)(\.\d+){0,2}")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 
@@ -177,6 +187,76 @@ def job_property(job: dict, key: str, raw: str | None) -> bool:
     return False
 
 
+def steps(text: str) -> list[dict]:
+    """The steps of a workflow that use an action: ``uses`` and the ``with:``
+    values. The same small line parser as ``jobs``: a step is a list item, and
+    its keys sit two columns right of its dash."""
+    out: list[dict] = []
+    key_indent, in_with = None, False
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        item = STEP_RE.match(line)
+        if item:
+            key_indent = len(item.group(1)) + 2
+            out.append({"name": None, "uses": "", "with": {}})
+            line, in_with = " " * key_indent + item.group(2), False
+        indent = len(line) - len(line.lstrip(" "))
+        if key_indent is None or indent < key_indent:
+            key_indent = None
+            continue
+        m = KEY_RE.match(line)
+        if indent == key_indent:
+            in_with = bool(m) and job_property(out[-1], m.group(2), m.group(3))
+        elif in_with and m:
+            out[-1]["with"][m.group(2).strip("\"'")] = scalar(m.group(3))
+    return [step for step in out if step["uses"]]
+
+
+def action_checks(action: str, given: dict[str, str]) -> list[str]:
+    """What a step that uses one of the standard's actions counts as calling.
+
+    The ``checks`` action counts as itself and as each check it runs, by the name
+    of the reusable workflow that runs the same check. So the lint mode, the ruff
+    check and the rehearsal read a ``python-lint`` the same for both ways of
+    calling it. A list written as an expression names no check: only a run
+    resolves it. Any other action counts as itself."""
+    if action != CHECKS_ACTION:
+        return [action]
+    listed = given.get("checks", "")
+    if "${{" in listed:
+        return [action]
+    named = run_checks.named([], {"CHECKS": listed})
+    return [action, *(name for name in named if name in run_checks.PARTS)]
+
+
+def action_calls(text: str, major: int, local: bool = False) -> list[dict]:
+    """The standard's actions the steps of a workflow file use, each with its ref."""
+    out = []
+    for step in steps(text):
+        m = USES_RE.match(step["uses"])
+        if not m:
+            continue
+        call = ACTION_RE.match(m.group(1))
+        here = LOCAL_ACTION_RE.match(m.group(1)) if local else None
+        hit = call or here
+        if not hit:
+            continue
+        ref = call.group(2) if call else "local"
+        for name in action_checks(hit.group(1).lower(), step["with"]):
+            out.append(
+                {
+                    "workflow": name,
+                    "ref": ref,
+                    "kind": ref_kind(ref, major),
+                    "version": m.group(2),
+                    "with": step["with"],
+                    "via": "action",
+                }
+            )
+    return out
+
+
 def ref_kind(ref: str, major: int) -> str:
     """current, older, sha or other: what a caller's ref is."""
     if ref == "local":
@@ -188,10 +268,12 @@ def ref_kind(ref: str, major: int) -> str:
 
 
 def workflow_calls(text: str, major: int, local: bool = False) -> list[dict]:
-    """The standards' workflows a workflow file calls, each with its ref.
+    """The standards' workflows a workflow file calls, each with its ref: a job
+    that calls a reusable workflow (``via`` is ``workflow``), and a step that uses
+    one of the standard's actions (``via`` is ``action``; ``action_calls``).
 
     ``local`` is for the standards repository itself, which calls its own
-    workflows by path: that counts as the current major.
+    workflows and actions by path: that counts as the current major.
     """
     out = []
     for job in jobs(text):
@@ -211,9 +293,10 @@ def workflow_calls(text: str, major: int, local: bool = False) -> list[dict]:
                 "kind": ref_kind(ref, major),
                 "version": m.group(2),
                 "with": job["with"],
+                "via": "workflow",
             }
         )
-    return out
+    return out + action_calls(text, major, local)
 
 
 def has_result_job(text: str) -> bool:
@@ -302,6 +385,7 @@ def row(node: dict, major: int, now: datetime, standards_name: str | None) -> di
         "name": node["name"],
         "calls": calls,
         "kinds": sorted({c["kind"] for c in calls}),
+        "one_job": any(c["workflow"] == CHECKS_ACTION for c in calls),
         "lint_mode": lint_mode(calls),
         "format_only": format_only(calls),
         "instructions": instructions(names(node.get("root"))),
@@ -371,6 +455,7 @@ def summary(rows: list[dict]) -> dict[str, int]:
         "older": sum("older" in r["kinds"] for r in adopters),
         "sha": sum("sha" in r["kinds"] for r in adopters),
         "other": sum("other" in r["kinds"] for r in adopters),
+        "one_job": sum(r["one_job"] for r in adopters),
         "outside_with_topic": sum(r["topic"] for r in outside),
         "outside_without_topic": sum(not r["topic"] for r in outside),
     }
@@ -386,6 +471,7 @@ def summary_lines(counts: dict[str, int], major: int) -> list[str]:
     if counts["other"]:
         out.append(f"  calling another ref (a branch): {counts['other']}")
     out += [
+        f"  with the one checks job (the checks action): {counts['one_job']}",
         f"  outside, with the topic {TOPIC}: {counts['outside_with_topic']}",
         f"  outside, without the topic: {counts['outside_without_topic']}",
     ]
