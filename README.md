@@ -503,6 +503,13 @@ v2 is a breaking release. What changed, and what a project must do:
 
 Projects pin `@v2`. A compatible change is released as `v2.x.y` and the `v2` tag moves to it; a breaking change is
 `v3`, with release notes saying what a project must change. The tag moves only to a commit whose CI passed here.
+
+The tag moves by itself. Publishing a release, from the Releases page or with `gh release create`, runs
+`release.yml`: for a `vX.Y.Z` that is not a pre-release, it waits for the `result` check on the release's commit
+and moves `vX` there (`vX.0.0` creates `vX`). It moves nothing for a fix to an older line, and fails the run, with
+the tag where it was, when CI did not pass. Its token comes from the release App, whose id is the `RELEASE_APP_ID`
+variable and whose key is the `RELEASE_APP_KEY` secret of the `release` environment (only `v*` tags may use it).
+Running the workflow by hand is a dry run: it says what a release of the tag you give would move.
 A change is compatible when no adopter's next ordinary pull request newly fails under it. The step before a release
 is the rehearsal: `python3 tools/fleet.py --run-tools <ref>` runs the new tools, as they are at `<ref>`, against
 every repository that calls the standard's workflows.

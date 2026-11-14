@@ -1,0 +1,54 @@
+# A published release moves its major tag: v2.4.1 moves v2, v3.0.0 creates v3 (tools/move_major.py, #10).
+# The tag ruleset lets only the owner and the release App move a v* tag, so the job mints the App's token. Its key
+# is a secret of the `release` environment, which only a v* tag may use: a branch's workflow cannot read it.
+# A dispatch is a dry run with the workflow's own read-only token: it says what a release of that tag would move.
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag: {type: string, required: true, description: "a published release's tag, vX.Y.Z"}
+
+permissions:
+  contents: read
+  checks: read
+
+jobs:
+  major-tag:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
+        id: app
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-checks: read
+      - name: Move the major tag
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          TAG: ${{ github.event.release.tag_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          flag=()
+          [ "$PRERELEASE" = true ] && flag=(--prerelease)
+          python3 tools/move_major.py --repo "$GITHUB_REPOSITORY" --tag "$TAG" "${flag[@]}"
+
+  dry-run:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Say what a release of the tag would move
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: python3 tools/move_major.py --repo "$GITHUB_REPOSITORY" --tag "$TAG" --dry-run
