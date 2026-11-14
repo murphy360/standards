@@ -1,0 +1,9 @@
+# THROWAWAY (ticket #33): a rule that finds the planted marker, so that the secret scan has one finding without a
+# token-shaped string in the history. Removed in the next commit, and the rule goes with it.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "planted-finding"
+description = "The marker ticket #33 planted to prove that one run reports every tool"
+regex = '''planted-finding-[0-9]{8}'''

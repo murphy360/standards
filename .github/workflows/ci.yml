@@ -128,6 +128,19 @@ jobs:
           format-check: true
           no-inline-config: true
           silencers: true
+  # THROWAWAY (ticket #33): the actions as a project uses them, by owner/repository/path at a ref. The ref is the
+  # commit before this one, so GitHub downloads the repository there and the action runs the tools beside it.
+  checks-remote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: murphy360/standards/actions/take-ownership@ec5658466fc44e5c415eb865a8c6fdf74c446698
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: murphy360/standards/actions/checks@ec5658466fc44e5c415eb865a8c6fdf74c446698
+        with:
+          format-check: true
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -157,7 +170,7 @@ jobs:
   result:
     name: result
     if: always()
-    needs: [lint, lint-changed, lint-pinned, shell, workflows, standards, node, test-docker, image, types, types-python, types-node, secret-scan, secret-scan-history, checks, tests, hook]
+    needs: [lint, lint-changed, lint-pinned, shell, workflows, standards, node, test-docker, image, types, types-python, types-node, secret-scan, secret-scan-history, checks, checks-remote, tests, hook]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
