@@ -40,7 +40,7 @@ jobs:
       check-pr-template: true
       check-pre-commit-config: true
       check-ticket-template: true   # this repository files its tickets from its own template
-      # check-templates stays off: this repository's CLAUDE.md is its own text, not a copy of templates/CLAUDE.md.
+      # check-templates stays off: this repository's AGENTS.md is its own text, not a copy of templates/AGENTS.md.
       # tests/test_templates.py runs this workflow's step with it on, against a project made from the templates.
   node:
     uses: ./.github/workflows/node-lint.yml

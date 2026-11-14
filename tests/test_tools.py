@@ -998,7 +998,7 @@ def test_standards_check_finds_every_gap(tmp_path):
     assert any("actions/checkout@v4" in g for g in gaps) and not any(
         "./local" in g for g in gaps
     )
-    assert any("CLAUDE.md is missing" in g for g in gaps)
+    assert any("AGENTS.md is missing" in g for g in gaps)
     dep = (
         "version: 2\nupdates:\n"
         "  - package-ecosystem: github-actions\n    directory: /\n"
