@@ -121,15 +121,15 @@ costs a minute.
 
 | | Jobs | Measured | Billed |
 |---|---|---|---|
-| Before | `standards`, `lint`, `shell`, `workflows`, `secret-scan` | 7 s, 7 s, 8 s, 7 s and 8 s: 37 s | 5 minutes |
-| After | `checks` | 11 s for the step that runs the five checks | 1 minute |
-| Both | `result` | 3 s | 1 minute |
+| Before | `standards`, `lint`, `shell`, `workflows`, `secret-scan` | 8 s each: 40 s | 5 minutes |
+| After | `checks` | 9 s: 7 s for the step that runs the five checks, 2 s to set up and check out | 1 minute |
+| Both | `result` | 2 s | 1 minute |
 
-- **Measured.** On this repository, on GitHub's `ubuntu-latest`: each job from its start to its end, as GitHub's
-  API reports it, without the wait for a runner. The five jobs and `result` are those of the run on `main` at
-  commit `14151df`. `checks` is the job of this change's own pull request (#56). Its step with the five checks took
-  11 s, with the three image pulls and the ruff install. The whole job took 48 s there, 30 s of it in a second
-  step that lints the Node fixture, which a project's job does not have.
+- **Measured.** One run on this repository, on GitHub's `ubuntu-latest`: the run of this change's pull request
+  (#56) at commit `ec56584`, which holds the five jobs and the `checks` job side by side. Each time is from the
+  start of a job or a step to its end, as GitHub's API reports it, without the wait for a runner. The `checks`
+  job here has one more step, which lints the Node fixture: 38 s that a project's job does not have, and that
+  the table leaves out. With it the job took 50 s.
 - **Arithmetic.** The billed minutes are counted from the rule above, one minute for each job under a minute. No
   bill was read: this repository is public, and a public repository is billed nothing. For a private project that
   runs these jobs it is 6 minutes a run before and 2 after. Its test and image jobs cost the same before and after.
