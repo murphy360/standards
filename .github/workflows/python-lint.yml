@@ -10,6 +10,7 @@
 #         # mode: changed     # a project still paying down its debt: every file a change touches must be clean
 #         # paths: src tools  # only these directories (default: every tracked file)
 #         # silencers: true   # every skip, xfail, type ignore and the like carries its reason; the default in v3
+#         # project-ruff: true  # lint with the ruff the project pins (ruff==<version>); the default in v3
 #         # format-only: ${{ contains(github.event.pull_request.labels.*.name, 'format-only') }}
 #
 # The base. A pull request is compared with the first parent of the merge commit the job checks out: the base branch
@@ -28,12 +29,20 @@
 # its reason=, a type ignore its error code and a comment, a pragma: no cover and a shellcheck disable a comment on
 # the line above. The last line counts the silencers left. It needs no base: mode all checks every file, mode
 # changed the files a change touches. Off by default in v2.
+#
+# Which ruff. The standard's default is written once, in this repository's pyproject.toml, and Dependabot moves it
+# there. With project-ruff: true the project pins its own: a `ruff==<version>` line in requirements-dev.txt, in
+# another requirements*.txt, or in a dependency group or an extra of its pyproject.toml, read in the directory the
+# lint runs in (tools/ruff_version.py). Dependabot's pull request in the project then moves the pin, and that pull
+# request is where the new release's findings show up, alone. A project that pins none gets the default. The
+# ruff-version input wins over both. The run prints the release and where it comes from. Off by default in v2.
 name: python-lint
 on:
   workflow_call:
     inputs:
       runs-on: {type: string, default: "ubuntu-latest", description: "a runner label, or a JSON list of labels (a self-hosted runner)"}
-      ruff-version: {type: string, default: "0.6.9", description: "the ruff release, pinned"}
+      ruff-version: {type: string, default: "", description: "one ruff release, by its version number; it wins over the project's pin (default: project-ruff decides)"}
+      project-ruff: {type: boolean, default: false, description: "lint with the ruff the project pins (ruff==<version> in its requirements*.txt or pyproject.toml), and with the standard's default when it pins none"}
       python-version: {type: string, default: "3.12"}
       format-check: {type: boolean, default: false, description: "also check ruff format, in the same scope as mode"}
       mode: {type: string, default: "all", description: "all: every file must be clean; changed: every file the change touches"}
@@ -51,14 +60,13 @@ jobs:
   lint:
     runs-on: ${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
     timeout-minutes: 15
+    env:
+      CODE_RULES_RUFF_VERSION: ${{ inputs.ruff-version }}  # read by tools/ruff_version.py and tools/code_rules.py
+      CODE_RULES_PROJECT_RUFF: ${{ inputs.project-ruff }}
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
     steps:
-      - name: Take ownership of the previous job's files (a self-hosted runner)
-        if: runner.environment == 'self-hosted'
-        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       # The tools come from the commit this workflow file was called at, so a workflow and its tools never disagree.
       # job.workflow_sha is that commit: what @v2 or @<sha> resolved to in a project, and the commit under test in
       # this repository's own ci.yml. It is read through toJSON because actionlint 1.7.12 does not know the property
@@ -86,10 +94,20 @@ jobs:
           git -C standards fetch -q --no-tags --depth=1 "$SERVER_URL/$repository" "$ref"
           git -C standards checkout -q --detach FETCH_HEAD
           echo "standards tools: $repository@$(git -C standards rev-parse HEAD) (${WORKFLOW_REF:-standards-ref $ref})"
+      - name: Take ownership of the previous job's files (a self-hosted runner)
+        if: runner.environment == 'self-hosted'
+        run: |
+          image="$(sh "$RUNNER_TEMP/standards/tools/image-ref.sh" alpine)"
+          docker run --rm -v "$GITHUB_WORKSPACE:/w" "$image" chown -R "$(id -u):$(id -g)" /w
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: ${{ inputs.python-version }}
-      - run: pip install "ruff==${{ inputs.ruff-version }}"
+      # ruff, at one release: the ruff-version input when a caller passes it; with project-ruff, the release the
+      # project pins; otherwise the standard's default, which is written once, in this repository's pyproject.toml.
+      # The step prints the release and where it comes from. The lint step reads the same two values (the job's env).
+      - name: ruff (the caller's version, the project's pin, or the standard's default)
+        run: python3 "$RUNNER_TEMP/standards/tools/ruff_version.py" --install
       - name: Code rules (every file, or the files a change touches); ruff, no noqa, complexity, file size, format
         env:
           MODE: ${{ inputs.mode }}

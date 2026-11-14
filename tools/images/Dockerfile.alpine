@@ -1,0 +1,4 @@
+# alpine, for the one step that takes back the files a container left in a self-hosted runner's workspace (chown):
+# one image, named by tag and digest. Dependabot moves both (the docker entry for /tools/images in
+# .github/dependabot.yml). Nothing is built from this file: tools/image-ref.sh reads the FROM line.
+FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf

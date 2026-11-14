@@ -20,12 +20,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 WORKFLOW = WORKFLOWS / "secret-scan.yml"
+PIN = ROOT / "tools" / "images" / "Dockerfile.gitleaks"  # where Dependabot moves it
 CONFIGS = (
     ROOT / ".pre-commit-config.yaml",
     ROOT / "templates" / "pre-commit-config.yaml",
 )
 IMAGE_RE = re.compile(
-    r"GITLEAKS_IMAGE: (ghcr\.io/gitleaks/gitleaks:v([\d.]+)@sha256:[0-9a-f]{64})$",
+    r"^FROM (ghcr\.io/gitleaks/gitleaks:v([\d.]+)@sha256:[0-9a-f]{64})$",
     re.MULTILINE,
 )
 HOOK_RE = re.compile(
@@ -34,7 +35,7 @@ HOOK_RE = re.compile(
     r"\s+hooks:\n"
     r"\s+- id: gitleaks\n"
 )
-IMAGE, VERSION = IMAGE_RE.search(WORKFLOW.read_text()).groups()
+IMAGE, VERSION = IMAGE_RE.search(PIN.read_text()).groups()
 ZEROS = "0" * 40
 ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 GIT_ENV = {
@@ -114,14 +115,16 @@ class Scan:
             "PR_BASE": "",
             "BEFORE": "",
             "FULL_HISTORY": "false",
-            "GITLEAKS_IMAGE": IMAGE,
             "RUNNER_TEMP": str(self.tmp / "runner"),
             "STUB_ARGS": str(self.args_file),
             **env,
         }
         if not real:
             full["PATH"] = self.stub_path
-        (self.tmp / "runner").mkdir(exist_ok=True)
+        tools = self.tmp / "runner" / "standards"  # where the workflow fetches them
+        tools.parent.mkdir(exist_ok=True)
+        if not tools.exists():
+            tools.symlink_to(ROOT, target_is_directory=True)
         return subprocess.run(
             ["bash", "-c", scan_script()],
             cwd=root,
@@ -144,8 +147,13 @@ def scan(tmp_path) -> Scan:
 
 
 def test_the_image_is_pinned_by_digest_and_named_once():
-    assert len(IMAGE_RE.findall(WORKFLOW.read_text())) == 1
-    assert "gitleaks-action" not in WORKFLOW.read_text()  # that action wants a licence
+    assert len(IMAGE_RE.findall(PIN.read_text())) == 1
+    workflow = WORKFLOW.read_text()
+    assert "ghcr.io/gitleaks" not in workflow  # named in the pin file only
+    assert 'GITLEAKS_IMAGE="$(sh "$RUNNER_TEMP/standards/tools/image-ref.sh" ' in (
+        workflow
+    )
+    assert "gitleaks-action" not in workflow  # that action wants a licence
 
 
 def test_both_pre_commit_configs_pin_the_hook_at_the_workflows_version():

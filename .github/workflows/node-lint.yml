@@ -16,6 +16,7 @@
 #         # paths: src        # only these directories (default: every tracked file)
 #         # no-inline-config: true  # an eslint-disable comment hides nothing and is a problem; the default in v3
 #         # silencers: true         # a .skip in a test carries its reason and .only is a problem; the default in v3
+#         # project-ruff: true      # Python files are linted with the ruff the project pins; the default in v3
 #
 # The base. A pull request is compared with the first parent of the merge commit the job checks out: the base branch
 # as the pull request was merged with it (the pull request's base SHA when HEAD is not a merge commit). A push is
@@ -33,7 +34,8 @@ on:
       no-inline-config: {type: boolean, default: false, description: "run ESLint with --no-inline-config, and fail on each eslint-disable comment"}
       silencers: {type: boolean, default: false, description: "each silencer needs its reason (python-lint.yml lists them); in a test file a .skip needs a comment above it and .only fails"}
       working-directory: {type: string, default: "."}
-      ruff-version: {type: string, default: "0.6.9", description: "for a project that also tracks Python files"}
+      ruff-version: {type: string, default: "", description: "for a project that also tracks Python files: one ruff release, by its version number; it wins over the project's pin (default: project-ruff decides)"}
+      project-ruff: {type: boolean, default: false, description: "lint Python files with the ruff the project pins (python-lint.yml says where), and with the standard's default when it pins none"}
       standards-ref:
         type: string
         default: ""
@@ -44,14 +46,13 @@ jobs:
   lint:
     runs-on: ${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
     timeout-minutes: 15
+    env:
+      CODE_RULES_RUFF_VERSION: ${{ inputs.ruff-version }}  # read by tools/ruff_version.py and tools/code_rules.py
+      CODE_RULES_PROJECT_RUFF: ${{ inputs.project-ruff }}
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
     steps:
-      - name: Take ownership of the previous job's files (a self-hosted runner)
-        if: runner.environment == 'self-hosted'
-        run: docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3 chown -R "$(id -u):$(id -g)" /w
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       # The tools come from the commit this workflow file was called at, so a workflow and its tools never disagree.
       # job.workflow_sha is that commit: what @v2 or @<sha> resolved to in a project, and the commit under test in
       # this repository's own ci.yml. It is read through toJSON because actionlint 1.7.12 does not know the property
@@ -79,13 +80,23 @@ jobs:
           git -C standards fetch -q --no-tags --depth=1 "$SERVER_URL/$repository" "$ref"
           git -C standards checkout -q --detach FETCH_HEAD
           echo "standards tools: $repository@$(git -C standards rev-parse HEAD) (${WORKFLOW_REF:-standards-ref $ref})"
+      - name: Take ownership of the previous job's files (a self-hosted runner)
+        if: runner.environment == 'self-hosted'
+        run: |
+          image="$(sh "$RUNNER_TEMP/standards/tools/image-ref.sh" alpine)"
+          docker run --rm -v "$GITHUB_WORKSPACE:/w" "$image" chown -R "$(id -u):$(id -g)" /w
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: ${{ inputs.node-version }}
-      - run: pip install "ruff==${{ inputs.ruff-version }}"
+      # ruff, at one release: the ruff-version input when a caller passes it; with project-ruff, the release the
+      # project pins; otherwise the standard's default, which is written once, in this repository's pyproject.toml.
+      # The step prints the release and where it comes from. The lint step reads the same two values (the job's env).
+      - name: ruff (the caller's version, the project's pin, or the standard's default)
+        run: python3 "$RUNNER_TEMP/standards/tools/ruff_version.py" --install
       - run: npm ci
       - name: Code rules (every file, or the files a change touches); ESLint, complexity, file size, prettier
         env:

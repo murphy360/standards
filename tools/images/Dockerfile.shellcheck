@@ -1,0 +1,4 @@
+# shellcheck, as shell-lint.yml runs it: one image, named by tag and digest. Dependabot moves both (the docker
+# entry for /tools/images in .github/dependabot.yml). Nothing is built from this file: tools/image-ref.sh reads the
+# FROM line. The shellcheck-py rev in both pre-commit configs is the same release (a test fails otherwise).
+FROM koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d

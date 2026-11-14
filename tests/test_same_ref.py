@@ -1,9 +1,10 @@
 """A workflow and its tools come from the same commit.
 
-Each check workflow (standards-check, python-lint, node-lint) fetches the standards'
-tools at ``job.workflow_sha``, the commit the workflow file itself was called at, into
-the runner's temp directory. The step's shell is run here as the workflow holds it,
-against a local repository that stands in for GitHub: no network.
+Each check workflow (standards-check, python-lint, node-lint, shell-lint, actionlint,
+secret-scan) fetches the standards' tools at ``job.workflow_sha``, the commit the
+workflow file itself was called at, into the runner's temp directory. The step's shell
+is run here as the workflow holds it, against a local repository that stands in for
+GitHub: no network.
 """
 
 import os
@@ -15,7 +16,15 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
-CHECKS = ("standards-check", "python-lint", "node-lint")
+TOOL = {
+    "standards-check": "check_standards.py",
+    "python-lint": "code_rules.py",
+    "node-lint": "code_rules.py",
+    "shell-lint": "image-ref.sh",
+    "actionlint": "image-ref.sh",
+    "secret-scan": "image-ref.sh",
+}
+CHECKS = tuple(TOOL)
 STEP = "- name: The standards' tools, from the commit this workflow was called at\n"
 REPOSITORY = "murphy360/standards"
 
@@ -185,9 +194,8 @@ def test_no_default_ref_is_left_to_edit_at_a_major_release(name):
 def test_the_tools_run_from_the_runners_temp_directory(name):
     text = workflow(name)
     assert ".standards/" not in text
-    tool = "check_standards.py" if name == "standards-check" else "code_rules.py"
-    assert f'"$RUNNER_TEMP/standards/tools/{tool}"' in text
-    assert text.index(STEP) < text.index(f"standards/tools/{tool}")
+    assert f'"$RUNNER_TEMP/standards/tools/{TOOL[name]}"' in text
+    assert text.index(STEP) < text.index("$RUNNER_TEMP/standards/tools/")
 
 
 def test_nothing_expects_the_tools_in_the_projects_workspace():

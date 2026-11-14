@@ -17,11 +17,11 @@ It checks:
   ``murphy360/standards`` at a version tag are allowed.
 * **CLAUDE.md** exists at the root (from the standards' template).
 
-Five more checks exist but default off, so a project already pinned at ``@v2`` sees no
+Six more checks exist but default off, so a project already pinned at ``@v2`` sees no
 new failure until it turns one on (``--require-pr-template``, ``--require-pre-commit``,
 ``--require-ticket-template``, ``--require-current-templates``,
-``--require-agent-settings``; the ``standards-check`` workflow has a matching input for
-each):
+``--require-agent-settings``, ``--require-one-ruff-version``; the ``standards-check``
+workflow has a matching input for each):
 
 * **pull request template**: ``.github/pull_request_template.md`` exists (from
   ``templates/pull_request_template.md``).
@@ -36,6 +36,10 @@ each):
 * **agent settings**: ``.claude/settings.json`` runs the guard as a ``PreToolUse``
   hook on the shell tool, and the guard file it names exists (from
   ``templates/claude/``).
+* **one ruff version**: every place the project names a ruff version names the same
+  one, so local and CI run the same ruff: the ``ruff==`` pins in its development
+  requirements, the ``ruff-pre-commit`` rev, what the ``code-rules`` hook runs and
+  what each lint job runs (``ruff_version.py`` holds the reading).
 
 Standard library only.
 """
@@ -240,6 +244,13 @@ def agent_settings_gaps(root: Path, files: list[str]) -> list[str]:
     ]
 
 
+def ruff_version_gaps(root: Path, files: list[str]) -> list[str]:
+    """The opt-in ruff check (ruff_version.py holds the reading, and fleet.py the
+    reader of a workflow's calls, so the report and the check agree)."""
+    calls = sibling("fleet").workflow_calls
+    return sibling("ruff_version").pin_problems(root, files, calls)
+
+
 def check(
     root: Path,
     *,
@@ -248,6 +259,7 @@ def check(
     require_ticket_template: bool = False,
     require_current_templates: bool = False,
     require_agent_settings: bool = False,
+    require_one_ruff_version: bool = False,
 ) -> list[str]:
     files = tracked(root)
     problems = []
@@ -288,6 +300,8 @@ def check(
         problems += stale_templates(root, files)
     if require_agent_settings:
         problems += agent_settings_gaps(root, files)
+    if require_one_ruff_version:
+        problems += ruff_version_gaps(root, files)
     return problems
 
 
@@ -320,6 +334,12 @@ def main(argv=None) -> int:
         action="store_true",
         help="also require .claude/settings.json with the guard hook (opt-in)",
     )
+    ap.add_argument(
+        "--require-one-ruff-version",
+        action="store_true",
+        help="also require every ruff version the project names (its requirements, "
+        "its pre-commit config, its lint jobs) to be the same one (opt-in)",
+    )
     a = ap.parse_args(argv)
     problems = check(
         Path(a.root).resolve(),
@@ -328,6 +348,7 @@ def main(argv=None) -> int:
         require_ticket_template=a.require_ticket_template,
         require_current_templates=a.require_current_templates,
         require_agent_settings=a.require_agent_settings,
+        require_one_ruff_version=a.require_one_ruff_version,
     )
     for p in problems:
         print(p)

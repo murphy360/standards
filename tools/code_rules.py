@@ -14,6 +14,8 @@ its own ruff config):
   defaults otherwise: 88 columns), plus pycodestyle and pyflakes (E, W, F) and three
   complexity limits added on top: McCabe complexity 15 (C901), 15 branches (PLR0912)
   and 60 statements (PLR0915) per function. No finding.
+* **which ruff** (``ruff_version.py``): the one on PATH. ``--ruff-version`` runs one
+  release, and ``--project-ruff`` the release the project pins (``ruff==<version>``).
 * **no noqa**: ruff runs with ``--ignore-noqa``, so a ``# noqa`` hides nothing, and a
   ``# noqa`` or ``# ruff: noqa`` comment in a Python file is a problem of its own.
   Comments are read with the tokenizer: the words in a string or a docstring pass.
@@ -68,7 +70,6 @@ import inspect
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 from collections import Counter
@@ -77,6 +78,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # the module beside this one
 import code_rules_config as config
 import code_rules_silencers as silencers
+import ruff_version
 
 SUFFIXES = (".py", ".js", ".ts", ".tsx", ".sh")
 COMPLEXITY, STANDARD = config.COMPLEXITY, config.STANDARD
@@ -108,6 +110,7 @@ BASE_ENV = "CODE_RULES_BASE"
 DEFAULT_BASE = "origin/main"
 OLD_BASELINE = "code_rules_baseline.json"
 noqa_comments = silencers.noqa_comments  # the first silencer: not allowed at all
+RUFF: dict[str, str] = {}  # the release the flags chose (ruff_version.py), set by main
 
 
 def is_test(rel: str) -> bool:
@@ -185,8 +188,8 @@ def file_sizes(
 
 
 def ruff_cmd() -> list[str]:
-    exe = shutil.which("ruff")
-    return [exe] if exe else [sys.executable, "-m", "ruff"]
+    """The ruff on PATH, or the release --ruff-version or --project-ruff chose."""
+    return ruff_version.command(RUFF.get("version"))
 
 
 def ruff_findings(
@@ -740,6 +743,7 @@ def parse_args(argv) -> argparse.Namespace:
     )
     ap.add_argument("--no-inline-config", action="store_true", help=config.INLINE_HELP)
     ap.add_argument("--silencers", action="store_true", help=silencers.HELP)
+    ruff_version.add_arguments(ap)  # --ruff-version and --project-ruff
     a = ap.parse_args(argv)
     if a.all and a.format_only:
         ap.error("--all and --format-only are two different checks")
@@ -757,6 +761,8 @@ def problem_file(line: str) -> str:
 def main(argv=None) -> int:
     a = parse_args(argv)
     root = Path(a.root).resolve()
+    RUFF.clear()
+    RUFF.update(ruff_version.chosen(root, a.ruff_version, a.project_ruff))
     now = measure(root, a)
     notes = config.notes(now)
     if (root / OLD_BASELINE).exists():
