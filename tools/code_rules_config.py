@@ -17,6 +17,9 @@ unseen is closed here:
 * ``eslint-disable`` comments (``--no-inline-config``): ESLint runs with
   ``--no-inline-config``, so a disable comment hides nothing, and each one in a
   tracked JavaScript or TypeScript file is a problem, as a ``# noqa`` is.
+* ruff's default rules: from ruff 0.16.0 a config that selects no rules gets about
+  400 of them, where it had 59. So the standard names the old default itself
+  (``project_rules``), and a new ruff changes no project's rules unasked.
 
 Standard library only.
 """
@@ -58,6 +61,9 @@ HIDDEN = (
     "the project's ruff config hid this finding, and a per-file ignore (or "
     "`lint.exclude`) cannot switch a standard rule off"
 )
+# ruff's default rules before 0.16.0. A command-line `select` replaces the config's
+# own `extend-select` and `ignore`, so project_rules repeats them after it.
+OLD_DEFAULT = 'lint.select=["E4", "E7", "E9", "F"]'
 CONFIG_NAMES = (".ruff.toml", "ruff.toml", "pyproject.toml")  # ruff's order
 EXTEND_IGNORES = "extend-per-file-ignores"
 JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
@@ -84,7 +90,7 @@ def unhidden(root: Path, keep: set[str] | None, ruff_findings, fix_for) -> list[
     ``ruff_findings`` runs ruff and ``fix_for`` gives a rule's fix (both from
     code_rules). A finding both runs see is counted once.
     """
-    found = ruff_findings(root, keep)
+    found = ruff_findings(root, keep, project_rules(root, keep))
     seen = {finding_key(f) for f in found}
     for f in ruff_findings(root, keep, STANDARD_ALONE):
         if finding_key(f) not in seen:
@@ -127,7 +133,8 @@ def notes(now: dict) -> list[str]:
     if tomllib is None and any(f.endswith(".py") for f in now["files"]):
         out.append(
             f"code_rules: note: `{EXTEND_IGNORES}` in the project's ruff config was "
-            "not checked: reading the config needs Python 3.11 or newer"
+            "not checked, and its `extend-select` and `ignore` were not repeated: "
+            "reading the config needs Python 3.11 or newer"
         )
     return out
 
@@ -192,6 +199,47 @@ def ruff_configs(root: Path, python: list[str]) -> dict[Path, dict]:
             found[target] = more
             queue.append((target, more))
     return found
+
+
+def rule_list(settings: dict, key: str) -> list[str] | None:
+    """A rule list a config sets, at the top level or under ``lint``; None if unset."""
+    lint = settings.get("lint")
+    tables = [t for t in (settings, lint) if isinstance(t, dict) and key in t]
+    if not tables:
+        return None
+    return [
+        s
+        for t in tables
+        if isinstance(t[key], list)
+        for s in t[key]
+        if isinstance(s, str)
+    ]
+
+
+def project_rules(root: Path, keep: set[str] | None) -> list[str]:
+    """The standard's flags for the run with the project's own config.
+
+    When no config ruff reads sets ``select``, ruff's old default is pinned on the
+    command line, and each config's ``extend-select`` and ``ignore`` are repeated
+    after it (their union, when there are several configs). An ignore that names a
+    standard rule is left out: the standard's ``--extend-select`` always overrode it.
+    """
+    pinned = [*STANDARD, "--config", OLD_DEFAULT]
+    if tomllib is None:
+        return pinned
+    python = sorted(f for f in keep or () if f.endswith(".py"))
+    configs = list(ruff_configs(root, python).values())
+    if any(rule_list(c, "select") is not None for c in configs):
+        return STANDARD
+
+    def union(*keys: str) -> list[str]:
+        return sorted({s for c in configs for k in keys for s in rule_list(c, k) or ()})
+
+    extend = union("extend-select")
+    ignore = [s for s in union("ignore", "extend-ignore") if not names_standard_rule(s)]
+    for flag, selectors in (("--extend-select", extend), ("--ignore", ignore)):
+        pinned += [flag, ",".join(selectors)] if selectors else []
+    return pinned
 
 
 def extend_ignores(settings: dict) -> list[tuple[str, list[str]]]:
