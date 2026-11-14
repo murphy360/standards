@@ -30,7 +30,7 @@ on the ticket, in one comment, that you started and which branch.
 ## Definition of done: one pull request
 
 1. The change, small and readable, in the files the ticket names.
-2. A unit test for every new behaviour, green in Docker; the PR body pastes the last lines of the output.
+2. A unit test for every new behaviour, green in Docker. CI's run is the record: the PR body pastes no output.
 3. The documentation in the same PR: the spec for the area, the user-facing manual, and a training or how-to line
    where the project has them. Write for the reader, not the developer.
 4. The commit: the first line says what changed in plain words; the body says why; `Closes #N`; a `Note:` line for
@@ -39,9 +39,9 @@ on the ticket, in one comment, that you started and which branch.
    the link on the ticket. Push to it as often as needed while you work. Once the tests and the lint are green
    locally, mark it ready **once**, with `gh pr ready`. After that, push again only to fix a CI failure or a review
    comment, and batch the fixes into one push.
-6. The PR body: what and why, `Closes #N`, the tests and their output, docs touched, any known issue with its ticket.
+6. The PR body: what and why, `Closes #N`, docs touched, any known issue with its ticket.
 7. Queue it when it is ready: the owner wants finished pull requests merged. Add the project's merge label
-   (Proteus: `queue`) so its merge train tests and merges it; where a project has no train, squash-merge once the
+   (for example `queue`) so its merge train tests and merges it; where a project has no train, squash-merge once the
    required checks are green. Never push to main, never enable auto-merge, never merge around the checks with an
    admin bypass. Leave the merge to the owner only when the ticket reserves it or a decision in it.
 
