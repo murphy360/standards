@@ -22,3 +22,12 @@
   args: [--eslint, --no-format]
   language: python
   pass_filenames: false
+# The layering contracts of the project's .importlinter: what the `layering` check of the checks action runs. A
+# project without an .importlinter passes. It runs in the root of the checkout, so a project whose contracts are in
+# a subdirectory (the action's working-directory) passes `--config <dir>/.importlinter` in `args`.
+- id: layering
+  name: layering contracts (.importlinter)
+  description: What the layering check runs. Every forbidden import fails, and every allowed one names its ticket.
+  entry: layering
+  language: python
+  pass_filenames: false

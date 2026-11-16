@@ -61,9 +61,9 @@ def hook(hook_id: str) -> dict[str, str]:
 # the manifest: valid, and each entry is a command the package installs
 
 
-def test_the_manifest_offers_the_two_hooks_and_each_is_valid():
+def test_the_manifest_offers_the_three_hooks_and_each_is_valid():
     hooks = manifest_hooks()
-    assert [h["id"] for h in hooks] == ["code-rules", "code-rules-node"]
+    assert [h["id"] for h in hooks] == ["code-rules", "code-rules-node", "layering"]
     for h in hooks:
         assert REQUIRED_KEYS <= set(h) <= KNOWN_KEYS, h
         assert h["language"] == "python"  # pre-commit builds the environment itself

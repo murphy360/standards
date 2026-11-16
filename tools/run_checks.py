@@ -12,12 +12,23 @@ A check is named after the reusable workflow that runs the same step:
 * ``node-lint``: the same install, ``npm ci``, then ``steps/code-rules.sh node``;
 * ``shell-lint``: ``steps/shell-lint.sh`` (shellcheck);
 * ``actionlint``: ``steps/actionlint.sh``;
-* ``secret-scan``: ``steps/secret-scan.sh`` (gitleaks).
+* ``secret-scan``: ``steps/secret-scan.sh`` (gitleaks);
+* ``layering``: ``layering.py``, the contracts of the project's ``.importlinter``;
+  without one it passes;
+* ``reuse``: ``reuse_report.py``, which informs and never fails. On a pull request
+  it compares with the base (``PR_BASE``) and writes what the change added to the
+  job summary.
 
-The two lints run in ``WORKING_DIRECTORY``, the others in the root of the checkout,
-which is the directory this file is run in. Every other input is a variable the step
-script reads itself (each script's header lists its own). This file reads four:
-``CHECKS``, ``WORKING_DIRECTORY``, ``SHELLCHECK_VERSION`` and ``ACTIONLINT_VERSION``.
+``layering`` and ``reuse`` have no reusable workflow and no step script: they are
+the action's alone, so this file runs each tool itself.
+
+The two lints, ``layering`` and ``reuse`` run in ``WORKING_DIRECTORY``, the others in
+the root of the checkout, which is the directory this file is run in. ``reuse``
+reads ``PATHS`` as the lints do; ``layering`` does not, as its contracts name what
+they cover. Every other input is a variable the step script reads itself (each
+script's header lists its own). This file reads ``CHECKS``, ``WORKING_DIRECTORY``,
+``SHELLCHECK_VERSION``, ``ACTIONLINT_VERSION``, and for ``reuse`` ``PATHS``,
+``EVENT``, ``PR_BASE`` and ``GITHUB_STEP_SUMMARY``.
 
 Every check runs, also after one failed, so one run reports every tool's findings.
 Inside one check the commands stop at the first that fails: no lint without its
@@ -50,11 +61,13 @@ PARTS = (
     "shell-lint",
     "actionlint",
     "secret-scan",
+    "layering",
+    "reuse",
 )
 LINTS = ("python-lint", "node-lint")
 # The default of the action's `checks` input. fleet.py reads it for a caller that
 # passes none, and a test keeps actions/checks/action.yml the same.
-DEFAULT = "standards-check python-lint shell-lint actionlint secret-scan"
+DEFAULT = "standards-check python-lint shell-lint actionlint secret-scan layering reuse"
 NOT_A_CHECK = 2
 DID_NOT_START = 127
 
@@ -65,6 +78,18 @@ Runner = Callable[[list[str], str], int]
 def step(script: str, *args: str) -> list[str]:
     """A step script under ``steps/``, run by bash as a workflow runs it."""
     return ["bash", str(STEPS / script), *args]
+
+
+def reuse_command(env: dict[str, str]) -> list[str]:
+    """The reuse report, with the lint's paths, the base of a pull request, and
+    the job summary to write to."""
+    argv = [sys.executable, str(TOOLS / "reuse_report.py")]
+    paths = env.get("PATHS", "").split()
+    argv += ["--paths", *paths] if paths else []
+    base = env.get("PR_BASE", "")
+    argv += ["--base", base] if env.get("EVENT") == "pull_request" and base else []
+    summary = env.get("GITHUB_STEP_SUMMARY", "")
+    return argv + (["--summary", summary] if summary else [])
 
 
 def commands(part: str, env: dict[str, str]) -> list[Command]:
@@ -85,6 +110,8 @@ def commands(part: str, env: dict[str, str]) -> list[Command]:
         "shell-lint": [(step("shell-lint.sh", env.get("SHELLCHECK_VERSION", "")), ".")],
         "actionlint": [(step("actionlint.sh", env.get("ACTIONLINT_VERSION", "")), ".")],
         "secret-scan": [(step("secret-scan.sh"), ".")],
+        "layering": [([sys.executable, str(TOOLS / "layering.py")], lint_dir)],
+        "reuse": [(reuse_command(env), lint_dir)],
     }
     return table[part]
 

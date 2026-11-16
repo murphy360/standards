@@ -1,6 +1,6 @@
 # The quick checks of a project as one step of the project's own job: standards-check, the lint (python-lint or
-# node-lint), shell-lint, actionlint and secret-scan. One runner and one checkout, where five reusable workflows
-# take five. The job is the project's, so it sets runs-on and timeout-minutes itself:
+# node-lint), shell-lint, actionlint, secret-scan, layering and reuse. One runner and one checkout, where five
+# reusable workflows take five. The job is the project's, so it sets runs-on and timeout-minutes itself:
 #   jobs:
 #     checks:
 #       runs-on: ubuntu-latest
@@ -14,9 +14,13 @@
 #           with:
 #             format-check: true
 #
-# `checks` names what runs, each by the name of the reusable workflow it replaces. The default is the five a Python
-# project runs. A JavaScript or TypeScript project names node-lint in place of python-lint (it lints the project's
-# Python files too). A second lint in another directory is a second step with `checks: node-lint`, its own
+# `checks` names what runs, each by the name of the reusable workflow it replaces. The default is the seven a Python
+# project runs. Two have no reusable workflow: `layering` checks the contracts of the project's .importlinter (it
+# passes without one), and `reuse` reports what the Python code holds twice and never fails; on a pull request it
+# writes what the change added to the job summary (tools/layering.py, tools/reuse_report.py). Both run in
+# `working-directory`, as the lints do, and `reuse` reads `paths`. A JavaScript or TypeScript project names
+# node-lint in place of python-lint (it lints the project's Python files too), and leaves out layering and reuse
+# unless it has Python code. A second lint in another directory is a second step with `checks: node-lint`, its own
 # `working-directory`, and `if: ${{ !cancelled() }}` so that it runs after a failure.
 #
 # Every check runs, also after one failed, and the step fails at the end: one run reports every tool's findings.
@@ -34,8 +38,8 @@ name: checks
 description: The quick checks of a murphy360 project in one step. Every check runs, and the step fails at the end if one failed.
 inputs:
   checks:
-    description: "the checks to run, separated by spaces: standards-check, python-lint, node-lint, shell-lint, actionlint, secret-scan"
-    default: "standards-check python-lint shell-lint actionlint secret-scan"
+    description: "the checks to run, separated by spaces: standards-check, python-lint, node-lint, shell-lint, actionlint, secret-scan, layering, reuse"
+    default: "standards-check python-lint shell-lint actionlint secret-scan layering reuse"
   python-version:
     description: "the Python that runs the tools and ruff"
     default: "3.12"
@@ -43,10 +47,10 @@ inputs:
     description: "node-lint: the Node that runs the project's ESLint and Prettier"
     default: "22"
   working-directory:
-    description: "the lints: the directory they run in (the other checks run in the root of the checkout)"
+    description: "the lints, layering and reuse: the directory they run in (the other checks run in the root of the checkout)"
     default: "."
   paths:
-    description: "the lints: space-separated directories or files to check (default: every tracked file)"
+    description: "the lints and reuse: space-separated directories or files to check (default: every tracked file)"
     default: ""
   format-check:
     description: "the lints: also check ruff format, or prettier for node-lint, on every file in paths"
@@ -123,7 +127,7 @@ runs:
         SHELLCHECK_VERSION: ${{ inputs.shellcheck-version }}
         ACTIONLINT_VERSION: ${{ inputs.actionlint-version }}
         FULL_HISTORY: ${{ inputs.full-history }}
-        # the secret scan's range (tools/steps/secret-scan.sh)
+        # the secret scan's range (tools/steps/secret-scan.sh), and the base reuse compares with
         EVENT: ${{ github.event_name }}
         PR_BASE: ${{ github.event.pull_request.base.sha }}
         BEFORE: ${{ github.event.before }}

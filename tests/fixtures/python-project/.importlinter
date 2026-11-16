@@ -1,0 +1,14 @@
+# The fixture's layering contract: ci.yml's `checks` job runs the `layering` check here (working-directory), so the
+# check reads a contract on every pull request. The package is the one module, src/release.py.
+[importlinter]
+root_package = release
+
+[importlinter:contract:offline]
+name = The release module reaches no network
+type = forbidden
+source_modules =
+    release
+forbidden_modules =
+    http
+    urllib
+    socket

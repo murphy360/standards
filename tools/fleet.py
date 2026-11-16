@@ -29,8 +29,9 @@ SHA, adopters with the one ``checks`` job, and repositories outside the standard
 without the topic.
 
 ``--run-tools <ref>`` is the rehearsal before a release (fleet_rehearsal.py). It
-clones each adopter, runs ``code_rules.py`` and ``check_standards.py`` from
-this checkout at ``<ref>`` against it, and prints pass or fail per repository.
+clones each adopter, runs ``code_rules.py``, ``check_standards.py`` and
+``layering.py`` from this checkout at ``<ref>`` against it, and prints pass or
+fail per repository.
 
 The report is printed and never written to a file. This repository is public and
 most of the repositories it lists are private: do not commit the output, and do
@@ -590,8 +591,8 @@ def parse_args(argv) -> argparse.Namespace:
     ap.add_argument(
         "--run-tools",
         metavar="REF",
-        help="the rehearsal: run code_rules.py and check_standards.py from this "
-        "checkout at REF against a clone of each adopter",
+        help="the rehearsal: run code_rules.py, check_standards.py and layering.py "
+        "from this checkout at REF against a clone of each adopter",
     )
     return ap.parse_args(argv)
 

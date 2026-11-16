@@ -92,8 +92,9 @@ jobs:
     uses: ./.github/workflows/secret-scan.yml
     with:
       full-history: true
-  # The quick checks in one job, as templates/ci.yml has them. The first `checks` step runs the five default checks
-  # on this repository. The second runs node-lint on the Node fixture, also when the first failed.
+  # The quick checks in one job, as templates/ci.yml has them. The first `checks` step runs the seven default checks
+  # on this repository, which has no .importlinter. The second runs node-lint on the Node fixture, also when the first
+  # failed, and the third runs layering and reuse on the Python fixture, which has a contract.
   # In a project take-ownership is the first step, before the checkout. Here it is a local action, which is only
   # there after the checkout. On a GitHub-hosted runner it does nothing in either place.
   checks:
@@ -116,6 +117,11 @@ jobs:
           checks: node-lint
           working-directory: tests/fixtures/node-project
           format-check: true
+      - if: ${{ !cancelled() }}
+        uses: ./actions/checks
+        with:
+          checks: layering reuse
+          working-directory: tests/fixtures/python-project
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15

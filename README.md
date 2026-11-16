@@ -8,7 +8,7 @@ rules.
 
 | Path | What it is |
 |---|---|
-| `actions/checks` | the quick checks as one step of a project's own job: `standards-check`, the lint (`python-lint` or `node-lint`), `shell-lint`, `actionlint` and `secret-scan`, each the check the reusable workflow of that name runs, with the same inputs; `checks` names which run; every one runs, also after one failed, and the step fails at the end ("One job runs the quick checks", below) |
+| `actions/checks` | the quick checks as one step of a project's own job: `standards-check`, the lint (`python-lint` or `node-lint`), `shell-lint`, `actionlint` and `secret-scan`, each the check the reusable workflow of that name runs, with the same inputs, and `layering` and `reuse`, which are the action's alone; `checks` names which run; every one runs, also after one failed, and the step fails at the end ("One job runs the quick checks", below) |
 | `actions/take-ownership` | the first step of a project's own job, before the checkout: on a self-hosted runner it takes back the files a previous job's containers left in the workspace; on a GitHub-hosted runner it does nothing |
 | `.github/workflows/standards-check.yml` | Fails a project that lacks a `.github/dependabot.yml` covering its ecosystems, pins an action to anything but a commit SHA, or has no instruction file (`AGENTS.md`, or a `CLAUDE.md` alone); six more checks run by default, each with a `check-*` input that turns it off: the pull request template, the pre-commit config, the ticket template, the agent settings, one ruff version, and `check-templates`, which fails a project whose copy of the shared text of `AGENTS.md` fell behind the template, whose `CLAUDE.md` does not import the `AGENTS.md` beside it, or whose CI has no job named `result` |
 | `.github/workflows/python-lint.yml` | ruff with the project's config plus the standard's rules, no `# noqa`, every silencer with its reason, and the file-size limit (`tools/code_rules.py`), on every file; `format-check: true` adds `ruff format --check`; `paths` limits it to some directories; it lints with the ruff the project pins (`project-ruff: false` takes the standard's default) |
@@ -22,8 +22,10 @@ rules.
 | `tools/code_rules.py` | the code rules: every file is clean, on every run; each finding printed with its line, rule and fix; every skip, xfail, type ignore and the like carries its reason, and is counted (`--no-silencers` leaves that out); `--eslint` adds the project's ESLint and `--prettier` adds `prettier --check`. CI runs it, and a project runs it as a pre-commit hook |
 | `tools/run_checks.py` | what `actions/checks` runs: each check the step names, whatever the one before it did, then a line per check and the highest exit code; on GitHub a log group per check, an error annotation per failed check and a table in the job summary |
 | `tools/steps/` | the shell of each check step, one script each (`standards-check.sh`, `code-rules.sh`, `shell-lint.sh`, `actionlint.sh`, `secret-scan.sh`, `take-ownership.sh`): the reusable workflow and the action run the same file, and the tests run that file |
+| `tools/layering.py` | the `layering` check: the project's layering contracts, in import-linter's `.importlinter` shape, checked with Python's own `ast`; a broken contract fails, every allowed import names its ticket, and one that no longer happens fails; no `.importlinter`, nothing to check ("Layering contracts and the reuse report", below) |
+| `tools/reuse_report.py` | the `reuse` check: names defined in more than one file and blocks of eight lines or more written twice; on a pull request the job summary says what the change added; it never fails |
 | `tools/type_check.py` | the type check `type-check` runs: pyright, or the project's `tsc --noEmit` with `--language typescript`; it reads the checker's output and prints each finding the way `code_rules.py` does |
-| `.pre-commit-hooks.yaml` | the code rules as pre-commit hooks: `code-rules` is what `python-lint` runs and `code-rules-node` is what `node-lint` runs. pre-commit installs this repository (`pyproject.toml`: the modules under `tools/` and the pinned ruff) into the hook's own environment, so a project installs nothing |
+| `.pre-commit-hooks.yaml` | the code rules as pre-commit hooks: `code-rules` is what `python-lint` runs and `code-rules-node` is what `node-lint` runs; `layering` is what the `layering` check runs. pre-commit installs this repository (`pyproject.toml`: the modules under `tools/` and the pinned ruff) into the hook's own environment, so a project installs nothing |
 | `tools/check_standards.py` | the checks `standards-check` runs; six of them have a flag that turns one off (`--no-require-pr-template`, `--no-require-pre-commit`, `--no-require-ticket-template`, `--no-require-current-templates`, `--no-require-agent-settings`, `--no-require-one-ruff-version`) |
 | `tools/ruff_version.py` | which ruff a project is linted with: the `ruff-version` input, the project's own pin, or the standard's default, which is written once, in `pyproject.toml` (also with `project-ruff: false`). The lint workflows install ruff with it and `code_rules.py` imports it, so CI and the hook choose the same way |
 | `tools/images/`, `tools/image-ref.sh` | the images the workflows run (shellcheck, actionlint, gitleaks, alpine), each by tag and digest in a Dockerfile of its own, where Dependabot updates them; the script reads one for a workflow |
@@ -88,21 +90,24 @@ its steps are the standard's actions:
 ```
 
 - **What runs.** `checks` names the checks, separated by spaces, each by the name of the reusable workflow that runs
-  the same check. The default is `standards-check python-lint shell-lint actionlint secret-scan`. A JavaScript or
-  TypeScript project writes `node-lint` in place of `python-lint`; `node-lint` lints the project's Python files
-  too. A second lint, in another directory, is a second `checks` step with `checks: node-lint`, its own
-  `working-directory`, and `if: ${{ !cancelled() }}` so that it runs after a failure.
+  the same check. The default is `standards-check python-lint shell-lint actionlint secret-scan layering reuse`.
+  `layering` and `reuse` have no reusable workflow ("Layering contracts and the reuse report", below). A JavaScript
+  or TypeScript project writes `node-lint` in place of `python-lint`, and leaves out `layering` and `reuse` unless
+  it has Python code; `node-lint` lints the project's Python files too. A second lint, in another directory, is a
+  second `checks` step with `checks: node-lint`, its own `working-directory`, and `if: ${{ !cancelled() }}` so that
+  it runs after a failure.
 - **Every check runs.** A check that fails does not stop the next one, and the step fails at the end, so one run
   reports every tool's findings. Each check's output is a group of the step's log. The last lines say which passed
-  and which failed (`checks: FAILED, 2 of 5: python-lint, actionlint`), each failed check is an error annotation
+  and which failed (`checks: FAILED, 2 of 7: python-lint, actionlint`), each failed check is an error annotation
   that names its group, and the job summary holds the same table. The step's exit code is the highest of the
   checks'. A name that is no check fails the step too, and the others still run.
 - **The inputs are the workflows'.** Same names and same defaults: `paths`, `format-check`, `working-directory`,
   `no-inline-config`, `silencers`, `project-ruff`, `ruff-version`, `python-version`, `node-version`, the six
   `check-*` inputs of standards-check, `shellcheck-version`, `actionlint-version` and `full-history`. Every check runs
   in full by default: an input set to `false` turns one part off, with the reason beside it. Where this page says an input goes on `python-lint`, on `node-lint` or in `standards-check`'s
-  `with:`, the `checks` step takes it the same way. `working-directory` is the lint's: the other checks run in the
-  root of the checkout. There is no `runs-on` and no `standards-ref`.
+  `with:`, the `checks` step takes it the same way. `working-directory` is the lint's, and `layering` and `reuse`
+  run there too: the other checks run in the root of the checkout. `reuse` reads `paths` as the lint does. There is
+  no `runs-on` and no `standards-ref`.
 - **The tools are the pinned ref's.** An action finds its own files (`github.action_path`), so the step runs the
   tools of the ref it names: nothing is fetched a second time, and nothing is added to the workspace.
 - **The checkout is the project's.** It fetches the whole history (`fetch-depth: 0`), because the secret scan
@@ -134,6 +139,73 @@ costs a minute.
 - **Arithmetic.** The billed minutes are counted from the rule above, one minute for each job under a minute. No
   bill was read: this repository is public, and a public repository is billed nothing. For a private project that
   runs these jobs it is 6 minutes a run before and 2 after. Its test and image jobs cost the same before and after.
+
+## Layering contracts and the reuse report
+
+A project with more than one package says which may import which, and sees the code it writes twice. Both are
+checks of `actions/checks`, on by default: `layering` and `reuse`. Neither has a reusable workflow: they start in the
+one job. Both run in `working-directory`. The tools use the standard library only (`tools/layering.py`,
+`tools/reuse_report.py`), so there is no import-linter, pylint or vulture to install.
+
+### Layering: `.importlinter`
+
+The contracts are in `.importlinter`, in the directory the check runs in, in import-linter's INI shape. A project
+without one passes, and the log says there is nothing to check.
+
+```ini
+# Which package may import which: the `layering` check of murphy360/standards/actions/checks.
+[importlinter]
+root_packages =
+    shop
+
+[importlinter:contract:domain]
+name = The domain imports no web module and no command line
+type = forbidden
+source_modules =
+    shop.domain
+forbidden_modules =
+    shop.web
+    shop.cli
+ignore_imports =
+    shop.domain.cart -> shop.web.render  # #123 the cart still renders itself
+exempt_modules =
+    shop.domain.debug  # a developer page: showing every layer is its job
+```
+
+- **A contract** is `forbidden`: no module of `source_modules`, or inside one, imports a module of
+  `forbidden_modules`. Direct imports only, as import-linter's `allow_indirect_imports = True`. Every import counts,
+  also one inside a function or under `if TYPE_CHECKING:`. Tests are not read.
+- **Where the packages are.** Each root package, and the package of each source module, is looked for among the
+  tracked `*.py` files: a `src/` layout, a package at the root, a package two levels down (a ROS workspace's
+  `src/<pkg>/<pkg>/`), or a directory of scripts with no `__init__.py` (`tools`, whose modules are
+  `tools.<script>`). A package that is not in the checkout (one the project installs) is said, and not read.
+- **An allowed import names its ticket.** A line of `ignore_imports` is `importer -> imported`, with the ticket that
+  removes it in a comment: `# #123`, `# owner/repo#123`, or the issue's URL. A line with no ticket fails. A line
+  whose import no longer happens fails too, so the list only shrinks.
+- **An exempt module** (`exempt_modules`, a line `module  # why`) is one a contract allows for good: its imports are
+  not checked. The reason is required, and an exempt module that imports nothing the contract forbids fails.
+  import-linter does not know this option.
+- **Not supported:** other contract types (`layers`, `independence`), wildcards, and contracts in `pyproject.toml`
+  or `setup.cfg`. Each is an error that fails the check, never a silent pass.
+- **Before a push.** The `layering` hook of `.pre-commit-hooks.yaml` runs the same tool in the root of the checkout.
+  A project whose `.importlinter` is in a subdirectory gives the hook `args: [--config, api/.importlinter]`.
+
+### The reuse report
+
+It reads every tracked `*.py` file in the directory it runs in, narrowed by `paths`, tests left out, and lists:
+
+- **names defined twice**: a top-level function or class of one name in more than one file (`main` aside);
+- **duplicated blocks**: eight or more lines alike in two places. Comments, docstrings, imports, blank lines and
+  lines of brackets alone are left out before comparing, as pylint's `duplicate-code` does.
+
+It informs and never fails: the log lists both, and a fault of its own is one line of the log. On a pull request it
+compares with the pull request's base. It reads the base's files with git (`git ls-tree`, `git cat-file`), so
+nothing is checked out, and the checkout's history (`fetch-depth: 0`) is enough. The job summary gives the counts
+and what the change added: a name now defined in a file that did not define it, and a block that is new or has more
+copies. On a push the summary gives the counts.
+
+There is no unused-code list. vulture is not in the standard library, and what it finds at 80 % confidence is mostly
+unused imports, which the lint fails on already (F401).
 
 ## The rules
 
@@ -575,13 +647,15 @@ fine.
 `--run-tools <ref>` is the rehearsal. It takes `tools/` and `templates/` of this checkout at `<ref>` (a tag, a branch or a commit),
 clones each adopter into a temporary directory, and runs the tools the way the adopter's workflows would, with the
 defaults of the ref's major: `code_rules.py` for a caller of `python-lint`, with its `format-check`, `paths`,
-`working-directory`, `silencers`, `project-ruff` and `ruff-version`, and `check_standards.py` for a caller of
-`standards-check`, with its `check-*` inputs. At a v3 ref every check is on unless the caller set it `false`, so the
+`working-directory`, `silencers`, `project-ruff` and `ruff-version`, `check_standards.py` for a caller of
+`standards-check`, with its `check-*` inputs, and `layering.py` for a caller of `layering`, in its
+`working-directory`. At a v3 ref every check is on unless the caller set it `false`, so the
 rehearsal shows what an adopter meets once it has moved. A `checks` step counts as a caller of each check it names,
 with the step's inputs. It prints pass or FAIL for each repository with the last line of each tool, deletes the
 clones, and exits 1 when a repository fails. `debt` is a failure of `code_rules.py` in a repository that lints in
 `mode: changed` (v2): its pull requests check only the files they touch, and at v3 it narrows `paths` instead. Run it
-at the current tag first to see what fails already. `node-lint` is not rehearsed.
+at the current tag first to see what fails already. `node-lint` is not rehearsed, and neither is `reuse`, which
+never fails.
 
 `code_rules.py` needs ruff. Where ruff is not installed the rehearsal stops and prints this command, which runs it
 in Docker from the root of this repository:
