@@ -229,9 +229,11 @@ def run_cli(cwd: Path, *args: str, **env: str) -> subprocess.CompletedProcess:
 
 def test_the_command_prints_the_version_and_where_it_comes_from(tmp_path):
     write(tmp_path, {"requirements-dev.txt": "ruff==0.8.4\n"})
-    assert run_cli(tmp_path).stdout == f"ruff {DEFAULT} (the standard's default)\n"
+    off = run_cli(tmp_path, "--no-project-ruff")
+    assert off.stdout == f"ruff {DEFAULT} (the standard's default)\n"
     pinned = "ruff 0.8.4 (the project's pin, requirements-dev.txt)\n"
-    assert run_cli(tmp_path, "--project-ruff").stdout == pinned
+    assert run_cli(tmp_path).stdout == pinned  # the default since v3
+    assert run_cli(tmp_path, "--project-ruff").stdout == pinned  # v2's flag
     given = run_cli(tmp_path, "--project-ruff", "--ruff-version", "0.9.2")
     assert given.stdout == "ruff 0.9.2 (given: ruff-version)\n"
     elsewhere = run_cli(ROOT, "--project-ruff", "--root", str(tmp_path))
@@ -248,6 +250,8 @@ def test_the_command_reads_what_a_workflow_sets_in_the_environment(tmp_path):
     assert on.stdout == "ruff 0.8.4 (the project's pin, requirements-dev.txt)\n"
     given = run_cli(tmp_path, **{version: "0.9.2", project: "true"})
     assert given.stdout == "ruff 0.9.2 (given: ruff-version)\n"
+    unset = run_cli(tmp_path)  # a run outside a workflow: the project's pin
+    assert unset.stdout == "ruff 0.8.4 (the project's pin, requirements-dev.txt)\n"
 
 
 def test_install_asks_pip_for_that_release(tmp_path, monkeypatch, capsys):
@@ -348,7 +352,7 @@ def test_both_pre_commit_configs_hold_ruff_at_the_default(config):
 def test_the_lint_workflows_name_no_version_and_ask_the_tool(name):
     text = (WORKFLOWS / f"{name}.yml").read_text()
     assert '      ruff-version: {type: string, default: "", description:' in text
-    assert "      project-ruff: {type: boolean, default: false, description:" in text
+    assert "      project-ruff: {type: boolean, default: true, description:" in text
     env = text.split("    timeout-minutes: 15\n    env:\n", 1)[1].split("    defaults:")
     assert [line.split("  #")[0].strip() for line in env[0].splitlines()] == [
         "CODE_RULES_RUFF_VERSION: ${{ inputs.ruff-version }}",
@@ -387,8 +391,7 @@ def test_ci_lints_the_fixture_with_the_ruff_it_pins():
         "    uses: ./.github/workflows/python-lint.yml",
         "    with:",
         "      format-check: true",
-        "      project-ruff: true",
-        "      working-directory: tests/fixtures/python-project",
+        "      working-directory: tests/fixtures/python-project",  # project-ruff: on
     ]
     needs = text.split("\n  result:\n", 1)[1].split("steps:", 1)[0]
     assert "lint-pinned" in needs
@@ -426,7 +429,7 @@ def test_the_workflows_step_installs_the_fixtures_pin(tmp_path):
     assert res.returncode == 0, res.stderr
     assert res.stdout == f"ruff {pin} (the project's pin, requirements-dev.txt)\n"
     assert asked.read_text() == f"install --disable-pip-version-check ruff=={pin}"
-    env["CODE_RULES_PROJECT_RUFF"] = "false"  # the input's default
+    env["CODE_RULES_PROJECT_RUFF"] = "false"  # project-ruff: false
     res = subprocess.run(["bash", "-e", "-c", shell], env=env, **run)
     assert res.stdout == f"ruff {DEFAULT} (the standard's default)\n"
     assert asked.read_text().endswith(f"ruff=={DEFAULT}")
@@ -556,7 +559,7 @@ def test_a_flag_prints_the_release_and_its_source(machine, capsys):
 
 def code_rules(root: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, str(TOOLS / "code_rules.py"), "--all", *args],
+        [sys.executable, str(TOOLS / "code_rules.py"), *args],
         cwd=root,
         capture_output=True,
         text=True,
@@ -565,15 +568,15 @@ def code_rules(root: Path, *args: str) -> subprocess.CompletedProcess:
 
 @needs_ruff
 def test_the_code_rules_run_the_projects_pin_and_say_so(tmp_path):
-    """With the flag, and with the release that is here: nothing to install."""
+    """By default since v3, with the release that is here: nothing to install."""
     here = ruff_version.installed(ruff_version.path_command())
     write(tmp_path, {"requirements-dev.txt": f"ruff=={here}\n", "a.py": "A = 1\n"})
     for args in (["init", "-q"], ["add", "-A"]):
         subprocess.run(["git", *args], cwd=tmp_path, check=True)
-    plain = code_rules(tmp_path)
+    plain = code_rules(tmp_path, "--no-project-ruff")
     assert plain.returncode == 0, plain.stdout + plain.stderr
-    assert "code_rules: ruff " not in plain.stdout  # as before: no new line
-    pinned = code_rules(tmp_path, "--project-ruff")
+    assert "code_rules: ruff " not in plain.stdout  # the ruff on PATH, as v2 ran it
+    pinned = code_rules(tmp_path)
     assert pinned.returncode == 0, pinned.stdout + pinned.stderr
     said = f"code_rules: ruff {here} (the project's pin, requirements-dev.txt)"
     assert pinned.stdout.splitlines()[0] == said
@@ -582,34 +585,43 @@ def test_the_code_rules_run_the_projects_pin_and_say_so(tmp_path):
     assert given.stdout.splitlines()[0] == (
         f"code_rules: ruff {here} (given: ruff-version)"
     )
-    from_env = subprocess.run(  # as the workflow's lint step gets it: the job's env
-        [sys.executable, str(TOOLS / "code_rules.py"), "--all"],
-        cwd=tmp_path,
-        env={**os.environ, ruff_version.PROJECT_ENV: "true"},
-        capture_output=True,
-        text=True,
-    )
-    assert from_env.stdout == pinned.stdout
+    for given, expected in (("true", pinned), ("false", plain)):
+        from_env = subprocess.run(  # as the workflow's lint step gets it: the env
+            [sys.executable, str(TOOLS / "code_rules.py")],
+            cwd=tmp_path,
+            env={**os.environ, ruff_version.PROJECT_ENV: given},
+            capture_output=True,
+            text=True,
+        )
+        assert from_env.stdout == expected.stdout
 
 
 def test_the_hooks_take_the_flags_and_the_rehearsal_passes_them():
     manifest = (ROOT / ".pre-commit-hooks.yaml").read_text()
-    assert "`--project-ruff`, `--ruff-version <version>`" in manifest
+    assert "`--no-project-ruff`, `--ruff-version <version>`" in manifest
     template = CONFIGS[1].read_text()
-    assert "        # args: [--all, --project-ruff]  # with `project-ruff: true`" in (
-        template
-    )
-    assert "          # project-ruff: true  # lint with the ruff the project pins" in (
+    assert "--project-ruff" not in template  # the hook runs the project's pin
+    assert "          # project-ruff: false " in (
         (ROOT / "templates" / "ci.yml").read_text()
     )
     given = {"project-ruff": "true", "ruff-version": "0.9.2"}
     (step,) = fleet_rehearsal.plan(
         {"calls": [{"workflow": "python-lint", "with": given}]}
     )
-    assert step["args"] == [
+    assert step["args"] == [  # a v2 rehearsal: the flag turns it on
         "--all",
         "--no-format",
         "--project-ruff",
+        "--ruff-version",
+        "0.9.2",
+    ]
+    given = {"project-ruff": "false", "ruff-version": "0.9.2"}
+    (step,) = fleet_rehearsal.plan(
+        {"calls": [{"workflow": "python-lint", "with": given}]}, 3
+    )
+    assert step["args"] == [
+        "--no-format",
+        "--no-project-ruff",
         "--ruff-version",
         "0.9.2",
     ]
@@ -799,13 +811,13 @@ def problems(root: Path, files: dict[str, str]) -> list[str]:
     return ruff_version.pin_problems(root, sorted(files), fleet.workflow_calls)
 
 
+# The lint job and both hooks run the project's pin: the default since v3.
 AGREEING = {
     "requirements-dev.txt": "ruff==0.8.4\n",
-    ".pre-commit-config.yaml": pre_commit(
-        hook="        args: [--all, --project-ruff]\n"
-    ).replace("      - id: code-rules-node\n", ""),
-    ".github/workflows/ci.yml": lint_job("    with:\n      project-ruff: true\n"),
+    ".pre-commit-config.yaml": pre_commit(),
+    ".github/workflows/ci.yml": lint_job(),
 }
+NOT_THE_PIN = "    with:\n      project-ruff: false\n"
 
 
 def test_a_project_whose_pins_agree_passes(tmp_path):
@@ -820,8 +832,10 @@ def test_a_project_that_names_no_ruff_at_all_passes(tmp_path):
 def test_a_pin_the_lint_job_and_the_hook_do_not_follow_is_a_problem(tmp_path):
     files = {
         **AGREEING,
-        ".pre-commit-config.yaml": pre_commit(),
-        ".github/workflows/ci.yml": lint_job(),
+        ".pre-commit-config.yaml": pre_commit(
+            hook="        args: [--no-project-ruff]\n"
+        ),
+        ".github/workflows/ci.yml": lint_job(NOT_THE_PIN),
     }
     (problem,) = problems(tmp_path, files)
     assert problem.startswith("ruff is not one version here")
@@ -830,10 +844,10 @@ def test_a_pin_the_lint_job_and_the_hook_do_not_follow_is_a_problem(tmp_path):
         f"{DEFAULT} in .github/workflows/ci.yml, python-lint (the standard's default)",
         "0.8.4 in .pre-commit-config.yaml, the ruff-pre-commit rev",
         f"{DEFAULT} in .pre-commit-config.yaml, the code-rules hook (the standard's",
-        f"{DEFAULT} in .pre-commit-config.yaml, the code-rules-node hook",
+        "0.8.4 in .pre-commit-config.yaml, the code-rules-node hook (the project's",
     ):
         assert place in problem, place
-    assert "`project-ruff: true`" in problem and "`--project-ruff`" in problem
+    assert "`project-ruff: false`" in problem and "`--no-project-ruff`" in problem
 
 
 @pytest.mark.parametrize(
@@ -881,7 +895,7 @@ repos:
   - repo: local
     hooks:
       - id: code-rules
-        entry: python3 tools/code_rules.py --all
+        entry: python3 tools/code_rules.py --no-project-ruff
         language: python
         additional_dependencies: ["ruff==0.9.2"]
 """
@@ -932,12 +946,17 @@ def project(root: Path, files: dict[str, str]) -> Path:
     return root
 
 
-def test_the_check_is_off_until_a_project_turns_it_on(tmp_path, capsys):
-    files = {**AGREEING, ".github/workflows/ci.yml": lint_job()}
+OTHER_CHECKS = ["pr-template", "pre-commit", "ticket-template", "current-templates"]
+OTHERS_OFF = [f"--no-require-{name}" for name in [*OTHER_CHECKS, "agent-settings"]]
+
+
+def test_the_check_is_on_unless_a_project_turns_it_off(tmp_path, capsys):
+    files = {**AGREEING, ".github/workflows/ci.yml": lint_job(NOT_THE_PIN)}
     root = project(tmp_path, files)
-    assert check_standards.main(["--root", str(root)]) == 0
+    tool = ["--root", str(root), *OTHERS_OFF]
+    assert check_standards.main([*tool, "--no-require-one-ruff-version"]) == 0
     assert capsys.readouterr().out == "standards: OK\n"
-    assert check_standards.main(["--root", str(root), "--require-one-ruff-version"])
+    assert check_standards.main(tool)
     out = capsys.readouterr().out
     assert out.startswith("ruff is not one version here, so local and CI can differ:")
     assert out.endswith("standards: FAILED, 1 gap(s)\n")
@@ -947,14 +966,16 @@ def test_the_workflow_passes_check_ruff_version_to_the_tool(tmp_path):
     """The last step's script, as the workflow runs it, against the real tools."""
     text = (WORKFLOWS / "standards-check.yml").read_text()
     declared = text.split("      check-ruff-version:\n", 1)[1].splitlines()[:2]
-    assert [line.strip() for line in declared] == ["type: boolean", "default: false"]
+    assert [line.strip() for line in declared] == ["type: boolean", "default: true"]
     assert "CHECK_RUFF_VERSION: ${{ inputs.check-ruff-version }}" in text
     assert text.endswith(
         'run: bash "$RUNNER_TEMP/standards/tools/steps/standards-check.sh"\n'
     )
-    files = {**AGREEING, ".github/workflows/ci.yml": lint_job()}
+    files = {**AGREEING, ".github/workflows/ci.yml": lint_job(NOT_THE_PIN)}
     root = project(tmp_path / "project", files)
-    env = {"PATH": os.environ["PATH"]}
+    env = {"PATH": os.environ["PATH"], "CHECK_AGENT_SETTINGS": "false"}
+    env |= {f"CHECK_{n}": "false" for n in ("PR_TEMPLATE", "PRE_COMMIT_CONFIG")}
+    env |= {f"CHECK_{n}": "false" for n in ("TICKET_TEMPLATE", "TEMPLATES")}
     results = {}
     for on in ("false", "true"):
         results[on] = subprocess.run(
@@ -967,7 +988,7 @@ def test_the_workflow_passes_check_ruff_version_to_the_tool(tmp_path):
     assert results["false"].returncode == 0, results["false"].stderr
     assert results["true"].returncode == 1, results["true"].stderr
     assert "ruff is not one version here" in results["true"].stdout
-    assert "# check-ruff-version: true" in (ROOT / "templates" / "ci.yml").read_text()
+    assert "# check-ruff-version: false" in (ROOT / "templates" / "ci.yml").read_text()
     assert ("check-ruff-version", "--require-one-ruff-version") in (
         fleet_rehearsal.CHECK_FLAGS
     )

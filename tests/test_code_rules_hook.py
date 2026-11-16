@@ -71,12 +71,12 @@ def test_the_manifest_offers_the_two_hooks_and_each_is_valid():
 
 
 def test_each_hook_runs_what_its_workflow_runs():
-    assert hook("code-rules")["args"] == "[--all]"
-    assert hook("code-rules-node")["args"] == "[--all, --eslint, --no-format]"
+    assert "args" not in hook("code-rules")  # every file, every check: the default
+    assert hook("code-rules-node")["args"] == "[--eslint, --no-format]"
     # one script holds the step of both lint workflows
     step = (ROOT / "tools" / "steps" / "code-rules.sh").read_text()
     assert "args=(--eslint --no-format)" in step
-    assert 'python3 "$tool" --all "${args[@]}"' in step
+    assert 'exec python3 "$here/../code_rules.py" "${args[@]}"' in step
     for workflow, language in (("node-lint", "node"), ("python-lint", "python")):
         text = (WORKFLOWS / f"{workflow}.yml").read_text()
         assert text.endswith(f'tools/steps/code-rules.sh" {language}\n'), workflow
@@ -117,7 +117,7 @@ def test_this_repository_runs_the_hook_on_its_own_checkout():
     text = OWN_CONFIG.read_text()
     local = text.split("  - repo: local\n", 1)[1].split("  - repo: ", 1)[0]
     assert "      - id: code-rules\n" in local
-    entry = "python3 tools/code_rules.py --all --silencers --project-ruff"
+    entry = "python3 tools/code_rules.py"  # every check is on by default
     assert f"        entry: {entry}\n" in local
     assert "        language: python\n" in local  # its own environment, as the hook
     assert (
@@ -186,7 +186,7 @@ def test_the_scratch_project_breaks_one_rule_in_each_file():
 @needs_ruff
 def test_the_tool_run_as_a_plain_script_fails_the_project_on_each_rule(project):
     res = subprocess.run(
-        [sys.executable, str(TOOLS / "code_rules.py"), "--all"],
+        [sys.executable, str(TOOLS / "code_rules.py")],
         cwd=project,
         capture_output=True,
         text=True,
@@ -208,19 +208,25 @@ def test_the_installed_modules_print_what_the_script_prints(project, tmp_path):
     console_script = (
         f"import sys; from {module} import {function}; sys.exit({function}())"
     )
+    # Copied, not installed: no package metadata names the default ruff here, so
+    # both run the ruff on PATH (the hook pre-commit builds has the metadata).
+    env = {**os.environ, "CODE_RULES_PROJECT_RUFF": "false"}
     res = subprocess.run(
-        [sys.executable, "-c", console_script, "--all"],
+        [sys.executable, "-c", console_script],
         cwd=project,
-        env={**os.environ, "PYTHONPATH": str(site)},
+        env={**env, "PYTHONPATH": str(site)},
         capture_output=True,
         text=True,
     )
     script = subprocess.run(
-        [sys.executable, str(TOOLS / "code_rules.py"), "--all"],
+        [sys.executable, str(TOOLS / "code_rules.py")],
         cwd=project,
+        env=env,
         capture_output=True,
         text=True,
     )
     assert res.returncode == 1, res.stderr
     assert res.stdout == script.stdout
-    assert hook_project.EXPECTED[0] in res.stdout
+    assert (
+        hook_project.EXPECTED[0] in res.stdout and "code_rules: ruff" not in res.stdout
+    )

@@ -23,14 +23,14 @@ repos:
       - id: ruff-format
   # The code rules of this checkout, not of a commit this file names: this repository's CI runs the tools of the
   # pull request, so its hook does too. A project takes the hook from this repository at a commit SHA instead
-  # (templates/pre-commit-config.yaml). No ruff is named here: with --project-ruff the tool runs the release this
-  # project pins, and it pins none, so that is the standard's default (pyproject.toml). The tool installs it into the
-  # hook's environment on the first run.
+  # (templates/pre-commit-config.yaml). No ruff is named here: the tool runs the release this project pins, and it
+  # pins none, so that is the standard's default (pyproject.toml). The tool installs it into the hook's environment
+  # on the first run.
   - repo: local
     hooks:
       - id: code-rules
         name: code rules (ruff, complexity, no noqa, file size, format)
-        entry: python3 tools/code_rules.py --all --silencers --project-ruff
+        entry: python3 tools/code_rules.py
         language: python
         pass_filenames: false
   - repo: https://github.com/shellcheck-py/shellcheck-py

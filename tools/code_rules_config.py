@@ -14,9 +14,12 @@ unseen is closed here:
   a ``.gitignore``): a tracked Python file ruff does not check is printed by name on
   every run, and the last line counts them. It is not a failure: tracked generated
   code is a real case. It is no longer silent.
-* ``eslint-disable`` comments (``--no-inline-config``): ESLint runs with
-  ``--no-inline-config``, so a disable comment hides nothing, and each one in a
-  tracked JavaScript or TypeScript file is a problem, as a ``# noqa`` is.
+* ``eslint-disable`` comments: ESLint runs with ``--no-inline-config``, so a disable
+  comment hides nothing, and each one in a tracked JavaScript or TypeScript file is
+  a problem, as a ``# noqa`` is. ``--inline-config`` leaves this out.
+* B008: the standard leaves it out with ``--ignore B008``, and a command-line ignore
+  wins over a config. So it is left off the command line when a config selects
+  B008 by name: that project keeps it.
 * ruff's default rules: from ruff 0.16.0 a config that selects no rules gets about
   400 of them, where it had 59. So the standard names the old default itself
   (``project_rules``), and a new ruff changes no project's rules unasked.
@@ -29,6 +32,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from argparse import SUPPRESS
 from pathlib import Path
 
 try:
@@ -36,22 +40,33 @@ try:
 except ModuleNotFoundError:  # Python before 3.11 cannot read the project's ruff config
     tomllib = None
 
-COMPLEXITY = ("C901", "PLR0912", "PLR0915")
+# The standard's rules (#35): pyflakes (F), the pycodestyle errors ruff checks by
+# default (E4, E7, E9), the likely bugs (B), old syntax (UP), simpler code (SIM),
+# import order (I), and two complexity limits. The formatter owns the layout, so no
+# line length (E501) and no whitespace rule (W).
+COMPLEXITY = ("C901", "PLR0915")
+RULES = ("F", "E4", "E7", "E9", "B", "UP", "SIM", "I", *COMPLEXITY)
+# B008, a call in a default argument, is not the standard's: it flags FastAPI's
+# `Depends()`. A project whose own config names B008 keeps it (project_rules).
+NOT_STANDARD = "B008"
 STANDARD = [
     "--extend-select",
-    "E,W,F," + ",".join(COMPLEXITY),
+    ",".join(RULES),
     "--config",
     "lint.mccabe.max-complexity=15",
     "--config",
-    "lint.pylint.max-branches=15",
-    "--config",
     "lint.pylint.max-statements=60",
 ]
+LEAVE_OUT = ["--ignore", NOT_STANDARD]
+# A selector of a rule in RULES but the complexity limits: a linter's prefix, then
+# digits (ruff reads `S` as bandit, not SIM, so a prefix of a prefix is another linter).
+STANDARD_RE = re.compile(r"F\d*|E(?:[479]\d*)?|B\d*|UP\d*|SIM\d*|I\d*")
 # The second run: the standard rules alone (--select, not --extend-select), and the
 # two options that hide a file from them emptied.
 STANDARD_ALONE = [
     "--select",
     *STANDARD[1:],
+    *LEAVE_OUT,
     "--config",
     "lint.per-file-ignores={}",
     "--config",
@@ -75,9 +90,6 @@ JS_PIECE_RE = re.compile(
 )
 # As ESLint reads a directive: the first word of the comment, then a space or its end.
 DISABLE_RE = re.compile(r"(?://|/\*)\s*eslint-disable(?:-next-line|-line)?(?=\s|\*/|$)")
-INLINE_HELP = (
-    "with --eslint: an `eslint-disable` comment hides nothing and is a problem"
-)
 
 
 def finding_key(f: dict) -> tuple:
@@ -140,10 +152,13 @@ def notes(now: dict) -> list[str]:
 
 
 def names_standard_rule(selector: str) -> bool:
-    """Whether a rule selector covers a standard rule: ``E501``, ``F``, ``PLR``."""
+    """Whether a rule selector covers a standard rule: ``F``, ``E7``, ``B905``, ``PLR``.
+
+    ``E501``, ``W``, ``B008`` and another linter's prefix (``FA``, ``S``) cover none.
+    """
     return bool(
         selector == "ALL"
-        or re.fullmatch(r"[EWF]\d*", selector)
+        or (STANDARD_RE.fullmatch(selector) and selector != NOT_STANDARD)
         or (selector and any(code.startswith(selector) for code in COMPLEXITY))
     )
 
@@ -223,23 +238,27 @@ def project_rules(root: Path, keep: set[str] | None) -> list[str]:
     command line, and each config's ``extend-select`` and ``ignore`` are repeated
     after it (their union, when there are several configs). An ignore that names a
     standard rule is left out: the standard's ``--extend-select`` always overrode it.
+    B008 is left out too, unless a config selects it by name.
     """
-    pinned = [*STANDARD, "--config", OLD_DEFAULT]
     if tomllib is None:
-        return pinned
+        return [*STANDARD, *LEAVE_OUT, "--config", OLD_DEFAULT]
     python = sorted(f for f in keep or () if f.endswith(".py"))
     configs = list(ruff_configs(root, python).values())
-    if any(rule_list(c, "select") is not None for c in configs):
-        return STANDARD
 
     def union(*keys: str) -> list[str]:
         return sorted({s for c in configs for k in keys for s in rule_list(c, k) or ()})
 
+    flags = list(STANDARD)
+    if NOT_STANDARD not in union("select", "extend-select"):
+        flags += LEAVE_OUT
+    if any(rule_list(c, "select") is not None for c in configs):
+        return flags
+    flags += ["--config", OLD_DEFAULT]
     extend = union("extend-select")
     ignore = [s for s in union("ignore", "extend-ignore") if not names_standard_rule(s)]
     for flag, selectors in (("--extend-select", extend), ("--ignore", ignore)):
-        pinned += [flag, ",".join(selectors)] if selectors else []
-    return pinned
+        flags += [flag, ",".join(selectors)] if selectors else []
+    return flags
 
 
 def extend_ignores(settings: dict) -> list[tuple[str, list[str]]]:
@@ -283,6 +302,21 @@ def ignore_problems(root: Path, files: list[str]) -> list[str]:
     return out
 
 
+def add_arguments(ap) -> None:
+    """``--inline-config``: ESLint reads ``eslint-disable`` comments again. Without
+    it (the default) a disable comment hides nothing and is a problem."""
+    ap.add_argument(
+        "--inline-config",
+        dest="no_inline_config",
+        action="store_false",
+        help="with --eslint: let an `eslint-disable` comment hide a finding",
+    )
+    # v2's flag, now the default: accepted, and ignored
+    ap.add_argument(
+        "--no-inline-config", action="store_true", default=True, help=SUPPRESS
+    )
+
+
 def eslint_extra(a) -> tuple:
     """What ``eslint_findings`` is given after its two arguments: the extra flags."""
     return (["--no-inline-config"],) if a.no_inline_config else ()
@@ -321,6 +355,6 @@ def problems(root: Path, tracked: set[str], a) -> list[str]:
         f for f in tracked if "/vendor/" not in f and "node_modules" not in f
     )
     out = ignore_problems(root, files)
-    if a.no_inline_config:
+    if a.eslint and a.no_inline_config:  # python-lint does not read JavaScript
         out += eslint_disable_comments(files, root)
     return out

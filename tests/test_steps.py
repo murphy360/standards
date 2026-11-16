@@ -5,9 +5,8 @@ a copy of its own. Each script is run here as they run it: by ``bash``, in a scr
 repository, with the inputs in the environment. ``docker`` and, where a test says
 so, ``python3`` are stand-ins that record what they were asked. No network.
 
-The code rules step's base and modes are in ``test_tools.py``, its flags in
-``test_silencers.py`` and ``test_code_rules_config.py``, and the secret scan in
-``test_secret_scan.py``.
+The code rules step's flags are here and in ``test_silencers.py`` and
+``test_code_rules_config.py``, and the secret scan is in ``test_secret_scan.py``.
 """
 
 import os
@@ -260,117 +259,69 @@ def test_actionlint_runs_its_image_on_the_checkout(repo, stubs):
 
 
 @pytest.mark.parametrize(("variable", "flag"), FLAGS)
-def test_standards_check_turns_each_input_into_its_flag(repo, stubs, variable, flag):
+def test_standards_check_turns_each_input_set_false_into_its_no_flag(
+    repo, stubs, variable, flag
+):
+    """v3: every check is on; `false` turns one off."""
     stubs.add("python3")
-    res = stubs.run(step("standards-check.sh"), repo, **{variable: "true"})
+    res = stubs.run(step("standards-check.sh"), repo, **{variable: "false"})
     assert res.returncode == 0, res.stderr
     tool, *flags = stubs.args()
     assert Path(tool).resolve() == ROOT / "tools" / "check_standards.py"
-    assert flags == [flag]
+    assert flags == [flag.replace("--", "--no-", 1)]
 
 
-def test_standards_check_leaves_a_check_off_unless_its_input_reads_true(repo, stubs):
+def test_standards_check_leaves_a_check_on_unless_its_input_reads_false(repo, stubs):
     stubs.add("python3")
-    off = {variable: "false" for variable, _ in FLAGS}
-    off["CHECK_TEMPLATES"] = "yes"  # not `true`: off
-    assert stubs.run(step("standards-check.sh"), repo, **off).returncode == 0
+    on = {variable: "true" for variable, _ in FLAGS}
+    on["CHECK_TEMPLATES"] = "yes"  # not `false`: on
+    on["CHECK_RUFF_VERSION"] = ""  # not passed: on
+    assert stubs.run(step("standards-check.sh"), repo, **on).returncode == 0
     assert len(stubs.args()) == 1  # the tool, and no flag
-    every = {variable: "true" for variable, _ in FLAGS}
-    assert stubs.run(step("standards-check.sh"), repo, **every).returncode == 0
-    assert stubs.args()[1:] == [flag for _, flag in FLAGS]
+    off = {variable: "false" for variable, _ in FLAGS}
+    assert stubs.run(step("standards-check.sh"), repo, **off).returncode == 0
+    assert stubs.args()[1:] == [flag.replace("--", "--no-", 1) for _, flag in FLAGS]
     failed = stubs.run(step("standards-check.sh"), repo, STUB_EXIT="1")
     assert failed.returncode == 1  # the tool's exit code is the step's
 
 
-# code-rules.sh: what the other test files leave
+# code-rules.sh: the inputs, as flags of code_rules.py, and nothing else
 
 
-LINT_ENV = {"MODE": "changed", "FORMAT_CHECK": "false", "CI": "true"}
+LINT_INPUTS = ("FORMAT_CHECK", "NO_INLINE_CONFIG", "SILENCERS", "PATHS")
 
 
-def test_code_rules_needs_a_language_and_a_mode_it_knows(repo, stubs):
+def test_code_rules_needs_a_language_it_knows(repo, stubs):
     for args in ([], ["ruby"]):
-        res = stubs.run(step("code-rules.sh", *args), repo, **LINT_ENV)
+        res = stubs.run(step("code-rules.sh", *args), repo)
         assert res.returncode == 2 and "usage: code-rules.sh python|node" in res.stderr
-    res = stubs.run(step("code-rules.sh", "python"), repo, MODE="some", EVENT="push")
-    assert res.returncode == 1
-    assert "::error::mode is all or changed, not 'some'" in res.stdout
 
 
-def pull_request(repo: Path) -> dict[str, str]:
-    """A pull request merged into a main that moved on: the merge commit is HEAD."""
-    stale = git(repo, "rev-parse", "HEAD")
-    git(repo, "checkout", "-q", "-b", "feat")
-    head = commit(repo, {"run.sh": "echo hi\n"}, "the pull request")
-    git(repo, "checkout", "-q", "main")
-    moved = commit(repo, {"other.sh": "echo other\n"}, "main moves on")
-    git(repo, "checkout", "-q", "--detach")
-    git(repo, "merge", "-q", "--no-ff", "-m", "merge", "feat")
-    return {"stale": stale, "head": head, "moved": moved}
-
-
-def test_a_complete_clone_keeps_its_history_when_the_base_is_there(repo, stubs):
-    """The checks job checks out the whole history for the secret scan. The base
-    is in it, so nothing is fetched: a fetch at depth 1 would cut the history off
-    at the base, and the scan after it would read every older commit as new."""
-    shas = pull_request(repo)
-    count = git(repo, "rev-list", "--count", "HEAD")
-    git(repo, "remote", "add", "origin", "file:///nowhere")  # a fetch would fail
-    res = stubs.run(
-        step("code-rules.sh", "python"),
-        repo,
-        **LINT_ENV,
-        EVENT="pull_request",
-        PR_BASE=shas["stale"],
-    )
+@pytest.mark.parametrize(
+    ("language", "given", "flags"),
+    [
+        ("python", {}, ["--no-format"]),
+        (
+            "python",
+            {"FORMAT_CHECK": "true", "SILENCERS": "false", "PATHS": " src  tools "},
+            ["--no-silencers", "--paths", "src", "tools"],
+        ),
+        ("python", {"NO_INLINE_CONFIG": "false"}, ["--no-format"]),  # node's
+        ("node", {"SILENCERS": "true"}, ["--eslint", "--no-format"]),
+        (
+            "node",
+            {"FORMAT_CHECK": "true", "NO_INLINE_CONFIG": "false"},
+            ["--eslint", "--no-format", "--prettier", "--inline-config"],
+        ),
+    ],
+)
+def test_code_rules_turns_the_inputs_into_flags(repo, stubs, language, given, flags):
+    """Every file in PATHS, always: no mode and no base to find."""
+    stubs.add("python3")
+    env = {name: "" for name in LINT_INPUTS} | given
+    res = stubs.run(step("code-rules.sh", language), repo, **env)
     assert res.returncode == 0, res.stdout + res.stderr
-    assert f"code rules base: {shas['moved']}, the first parent of the merge" in (
-        res.stdout
-    )
-    assert "code_rules: 1 changed file(s) checked" in res.stdout
-    assert git(repo, "rev-parse", "--is-shallow-repository") == "false"
-    assert git(repo, "rev-list", "--count", "HEAD") == count
-
-
-def test_a_complete_clone_fetches_a_missing_base_without_a_depth(repo, stubs, tmp_path):
-    """A force push: the commit before it is not in the clone. It is fetched whole,
-    so the clone stays complete."""
-    before = commit(repo, {"old.sh": "echo old\n"}, "the commit a force push drops")
-    git(repo, "update-ref", "refs/dropped", before)
-    git(repo, "reset", "-q", "--hard", "HEAD~1")
-    commit(repo, {"run.sh": "echo hi\n"}, "the forced push")
-    clone = tmp_path / "clone"
-    git(tmp_path, "clone", "-q", "--branch", "main", f"file://{repo}", str(clone))
-    assert git(clone, "rev-list", "--count", "HEAD") == "2"
-    res = stubs.run(
-        step("code-rules.sh", "python"), clone, **LINT_ENV, EVENT="push", BEFORE=before
-    )
-    assert res.returncode == 0, res.stdout + res.stderr
-    assert f"code rules base: {before}, the commit before the push" in res.stdout
-    assert "could not fetch" not in res.stdout
-    assert git(clone, "cat-file", "-t", before) == "commit"
-    assert git(clone, "rev-parse", "--is-shallow-repository") == "false"
-    assert git(clone, "rev-list", "--count", "HEAD") == "2"
-
-
-def test_a_shallow_clone_fetches_the_base_alone_as_the_workflows_always_did(
-    repo, stubs, tmp_path
-):
-    before = git(repo, "rev-parse", "HEAD")
-    commit(repo, {"run.sh": "echo hi\n"})
-    clone = tmp_path / "clone"
-    git(tmp_path, "clone", "-q", "--depth=1", f"file://{repo}", str(clone))
-    res = stubs.run(
-        step("code-rules.sh", "python"), clone, **LINT_ENV, EVENT="push", BEFORE=before
-    )
-    assert res.returncode == 0, res.stdout + res.stderr
-    assert "code_rules: 1 changed file(s) checked" in res.stdout
-    assert git(clone, "rev-list", "--count", "--all") == "1"  # still one commit deep
-    assert git(clone, "cat-file", "-t", before) == "commit"
-
-
-def test_format_only_is_python_lints_and_says_when_it_proves_nothing(repo, stubs):
-    env = {**LINT_ENV, "MODE": "all", "FORMAT_ONLY": "true", "EVENT": "push"}
-    res = stubs.run(step("code-rules.sh", "python"), repo, **env)
-    assert res.returncode == 0, res.stdout + res.stderr
-    assert "::notice::format-only proves a pull request; this is a push" in res.stdout
+    tool, *args = stubs.args()
+    assert Path(tool).resolve() == ROOT / "tools" / "code_rules.py"
+    assert args == flags
+    assert stubs.run(step("code-rules.sh", language), repo, STUB_EXIT="1").returncode

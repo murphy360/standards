@@ -158,16 +158,15 @@ def test_this_repository_passes_its_own_check():
     gaps = standards.check(ROOT, require_ticket_template=True)
     assert not [g for g in gaps if g.startswith(MISSING)]
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
-    assert re.search(r"^\s+check-ticket-template: true\b", ci, re.MULTILINE)
+    assert "check-ticket-template:" not in ci  # on, the default
 
 
 # check_standards.py --require-ticket-template
 
 
-def test_ticket_template_check_is_off_by_default(tmp_path):
+def test_ticket_template_check_is_taken_by_keyword(tmp_path):
     root = repo(tmp_path, {})
     assert standards.check(root) == []
-    assert standards.main(["--root", str(root)]) == 0
 
 
 def test_ticket_template_check_fails_without_a_template(tmp_path):
@@ -209,30 +208,35 @@ def test_ticket_template_check_fails_where_github_finds_none(tmp_path, path):
 
 def test_main_wires_the_ticket_template_flag(tmp_path, capsys):
     root = repo(tmp_path, {})
-    assert standards.main(["--root", str(root), "--require-ticket-template"]) == 1
+    others = ["pr-template", "pre-commit", "current-templates", "agent-settings"]
+    tool = ["--root", str(root), "--no-require-one-ruff-version"]
+    tool += [f"--no-require-{name}" for name in others]
+    assert standards.main([*tool, "--no-require-ticket-template"]) == 0
+    capsys.readouterr()
+    assert standards.main(tool) == 1  # on by default since v3
     out = capsys.readouterr().out
     assert MISSING in out and "standards: FAILED, 1 gap(s)" in out
     path = root / ".github" / "ISSUE_TEMPLATE" / "ticket.md"
     path.parent.mkdir(parents=True)
     path.write_text(TICKET.read_text())
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
-    assert standards.main(["--root", str(root), "--require-ticket-template"]) == 0
+    assert standards.main(tool) == 0
     assert "standards: OK" in capsys.readouterr().out
 
 
 # the workflow input, and the rehearsal
 
 
-def test_workflow_input_is_off_by_default_and_passes_the_flag():
+def test_workflow_input_is_on_by_default_and_passes_the_flag():
     text = WORKFLOW.read_text()
     declared = re.search(
         r"^      check-ticket-template:\n"
-        r"        type: boolean\n        default: false\n",
+        r"        type: boolean\n        default: true\n",
         text,
         re.MULTILINE,
     )
-    assert declared, "the input must be a boolean that defaults to false"
-    # Passed the way the other opt-in checks are: through the environment, never
+    assert declared, "the input must be a boolean that defaults to true"
+    # Passed the way the other checks are: through the environment, never
     # written into the script.
     assert "CHECK_TICKET_TEMPLATE: ${{ inputs.check-ticket-template }}" in text
     assert text.endswith(
@@ -240,10 +244,9 @@ def test_workflow_input_is_off_by_default_and_passes_the_flag():
     )
     script = (ROOT / "tools" / "steps" / "standards-check.sh").read_text()
     assert "inputs." not in script
-    assert re.search(
-        r'if \[ "\$CHECK_TICKET_TEMPLATE" = "true" \]; then\n'
-        r"\s+args\+=\(--require-ticket-template\)\n\s*fi\n",
-        script,
+    assert (
+        '[ "$CHECK_TICKET_TEMPLATE" != false ] || args+=(--no-require-ticket-template)'
+        in script
     )
 
 
@@ -277,8 +280,8 @@ def test_readme_names_the_templates_the_flag_and_the_run_order():
     for needle in (
         "`templates/ISSUE_TEMPLATE/ticket.md`",
         "`templates/ISSUE_TEMPLATE/config.yml`",
-        "`--require-ticket-template`",
-        "`check-ticket-template: true`",
+        "`--no-require-ticket-template`",
+        "`check-ticket-template: false`",
         "RUN ORDER\n\n1. #<number> <title>",
     ):
         assert needle in readme, needle

@@ -15,16 +15,16 @@ It checks:
   comment may name the version).
   Local actions (``./``), ``docker://`` images with a digest, and
   ``murphy360/standards`` at a version tag are allowed: its reusable workflows
-  and its actions (``murphy360/standards/actions/<name>@v2``).
+  and its actions (``murphy360/standards/actions/<name>@v3``).
 * **The instruction file** exists at the root: ``AGENTS.md``, the file every agent
   tool reads (from the standards' template), with or without a ``CLAUDE.md`` that
   imports it. A project that has only ``CLAUDE.md`` passes too.
 
-Six more checks exist but default off, so a project already pinned at ``@v2`` sees no
-new failure until it turns one on (``--require-pr-template``, ``--require-pre-commit``,
-``--require-ticket-template``, ``--require-current-templates``,
-``--require-agent-settings``, ``--require-one-ruff-version``; the ``standards-check``
-workflow has a matching input for each):
+Six more checks run by default since v3. Each one has a ``--no-`` flag that turns it
+off (``--no-require-pr-template``, ``--no-require-pre-commit``,
+``--no-require-ticket-template``, ``--no-require-current-templates``,
+``--no-require-agent-settings``, ``--no-require-one-ruff-version``), and the
+``standards-check`` workflow has a matching input for each, ``true`` by default:
 
 * **pull request template**: ``.github/pull_request_template.md`` exists (from
   ``templates/pull_request_template.md``).
@@ -188,7 +188,7 @@ def sibling(name: str):
 
 
 def stale_templates(root: Path, files: list[str]) -> list[str]:
-    """The opt-in template check: the shared text is the template's
+    """The template check: the shared text is the template's
     (sync_templates.py holds the comparison), and CI has a job named ``result``
     (fleet.py holds the reader of a workflow's jobs, so the report and the check
     agree)."""
@@ -252,7 +252,7 @@ def agent_settings_gaps(root: Path, files: list[str]) -> list[str]:
 
 
 def ruff_version_gaps(root: Path, files: list[str]) -> list[str]:
-    """The opt-in ruff check (ruff_version.py holds the reading, and fleet.py the
+    """The ruff check (ruff_version.py holds the reading, and fleet.py the
     reader of a workflow's calls, so the report and the check agree)."""
     calls = sibling("fleet").workflow_calls
     return sibling("ruff_version").pin_problems(root, files, calls)
@@ -312,52 +312,37 @@ def check(
     return problems
 
 
+REQUIRE = (
+    ("pr-template", "also require .github/pull_request_template.md"),
+    ("pre-commit", "also require .pre-commit-config.yaml"),
+    ("ticket-template", "also require an issue template in .github/ISSUE_TEMPLATE"),
+    (
+        "current-templates",
+        "also require the shared text of AGENTS.md or CLAUDE.md to be the template's, "
+        "a CLAUDE.md beside an AGENTS.md to import it, and a CI job named `result`",
+    ),
+    ("agent-settings", "also require .claude/settings.json with the guard hook"),
+    (
+        "one-ruff-version",
+        "also require every ruff version the project names (its requirements, its "
+        "pre-commit config, its lint jobs) to be the same one",
+    ),
+)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument("--root", default=".")
-    ap.add_argument(
-        "--require-pr-template",
-        action="store_true",
-        help="also require .github/pull_request_template.md (opt-in, added in v2.1.0)",
-    )
-    ap.add_argument(
-        "--require-pre-commit",
-        action="store_true",
-        help="also require .pre-commit-config.yaml (opt-in, added in v2.1.0)",
-    )
-    ap.add_argument(
-        "--require-ticket-template",
-        action="store_true",
-        help="also require an issue template in .github/ISSUE_TEMPLATE (opt-in)",
-    )
-    ap.add_argument(
-        "--require-current-templates",
-        action="store_true",
-        help="also require the shared text of AGENTS.md or CLAUDE.md to be the "
-        "template's, a CLAUDE.md beside an AGENTS.md to import it, and a CI job "
-        "named `result` (opt-in)",
-    )
-    ap.add_argument(
-        "--require-agent-settings",
-        action="store_true",
-        help="also require .claude/settings.json with the guard hook (opt-in)",
-    )
-    ap.add_argument(
-        "--require-one-ruff-version",
-        action="store_true",
-        help="also require every ruff version the project names (its requirements, "
-        "its pre-commit config, its lint jobs) to be the same one (opt-in)",
-    )
+    for name, what in REQUIRE:
+        ap.add_argument(
+            f"--require-{name}",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help=f"{what} (on by default since v3)",
+        )
     a = ap.parse_args(argv)
-    problems = check(
-        Path(a.root).resolve(),
-        require_pr_template=a.require_pr_template,
-        require_pre_commit=a.require_pre_commit,
-        require_ticket_template=a.require_ticket_template,
-        require_current_templates=a.require_current_templates,
-        require_agent_settings=a.require_agent_settings,
-        require_one_ruff_version=a.require_one_ruff_version,
-    )
+    flags = {k: v for k, v in vars(a).items() if k.startswith("require_")}
+    problems = check(Path(a.root).resolve(), **flags)
     for p in problems:
         print(p)
     print("standards: " + (f"FAILED, {len(problems)} gap(s)" if problems else "OK"))

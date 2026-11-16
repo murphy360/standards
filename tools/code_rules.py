@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 """Code rules: every file is clean.
 
-    python3 code_rules.py --all               # every file: what CI runs by default
-    python3 code_rules.py                     # only the files this branch changes
-    python3 code_rules.py --format-only       # prove a branch only re-formats
-    python3 code_rules.py --all --paths src tools   # only these directories
-    python3 code_rules.py --eslint --prettier       # ESLint and prettier, same scope
+    python3 code_rules.py                       # every file: what CI runs
+    python3 code_rules.py --paths src tools     # only these directories
+    python3 code_rules.py --eslint --prettier   # also ESLint and prettier
 
 What a clean file is (standard settings; a project changes them only with a reason, in
 its own ruff config):
 
-* **ruff** with the project's own configuration (pyproject.toml / ruff.toml; ruff's
-  defaults otherwise: 88 columns), plus pycodestyle and pyflakes (E, W, F) and three
-  complexity limits added on top: McCabe complexity 15 (C901), 15 branches (PLR0912)
-  and 60 statements (PLR0915) per function. No finding.
-* **which ruff** (``ruff_version.py``): the one on PATH. ``--ruff-version`` runs one
-  release, and ``--project-ruff`` the release the project pins (``ruff==<version>``).
+* **ruff** with the project's own configuration (pyproject.toml / ruff.toml), plus the
+  standard's rules added on top: pyflakes (F), ruff's default pycodestyle errors (E4,
+  E7, E9), likely bugs (B, without B008), old syntax (UP), simpler code (SIM), import
+  order (I), McCabe complexity 15 (C901) and 60 statements per function (PLR0915). No
+  finding. The formatter owns the layout: there is no line-length rule.
+* **which ruff** (``ruff_version.py``): the release the project pins
+  (``ruff==<version>``), or the standard's default when it pins none.
+  ``--ruff-version`` runs one release, and ``--no-project-ruff`` the ruff on PATH.
 * **no noqa**: ruff runs with ``--ignore-noqa``, so a ``# noqa`` hides nothing, and a
   ``# noqa`` or ``# ruff: noqa`` comment in a Python file is a problem of its own.
   Comments are read with the tokenizer: the words in a string or a docstring pass.
-* **silencers** (``--silencers``, ``code_rules_silencers.py``): a pytest skip or
-  xfail, a type ignore, a ``# pragma: no cover``, a ``# shellcheck disable=`` and a
-  ``.skip`` in a JavaScript test each carry a reason, ``.only`` is a problem, and
-  the last line counts the silencers left.
+* **silencers** (``code_rules_silencers.py``; ``--no-silencers`` leaves it out): a
+  pytest skip or xfail, a type ignore, a ``# pragma: no cover``, a
+  ``# shellcheck disable=`` and a ``.skip`` in a JavaScript test each carry a reason,
+  ``.only`` is a problem, and the last line counts the silencers left.
 * **format**: a Python file passes ``ruff format --check`` (``--no-format`` leaves
   this out, for a project that has not re-formatted yet).
 * **size**: a tracked source file (.py .js .ts .tsx .sh) is at most 800 lines, a test
@@ -30,34 +30,23 @@ its own ruff config):
 * **ESLint** (``--eslint``): the project's ESLint from ``node_modules``, with its
   config, plus complexity 15 and 60 statements. A finding fails like a ruff finding.
   ruff is skipped when no Python file is tracked.
-* **Prettier** (``--prettier``): ``prettier --check`` in the same scope as the mode.
+* **Prettier** (``--prettier``): ``prettier --check`` on every file in ``--paths``.
   Python stays with ruff.
 * **the config** (``code_rules_config.py``): a project's own config adds rules and
   excludes files, and each Python file ruff does not check is printed. It cannot
-  switch a standard rule off: not with a per-file ignore and not, under
-  ``--no-inline-config``, with an ``eslint-disable`` comment.
+  switch a standard rule off: not with a per-file ignore and not with an
+  ``eslint-disable`` comment (ESLint runs with ``--no-inline-config``;
+  ``--inline-config`` leaves that out).
 
-The rule: **every file is clean**, checked on every run with ``--all``. A breach in
-any file fails. There is no baseline and no flag that lets a finding pass. Each
-finding in a file that fails is printed with its line, its rule and how to fix it,
-so the log alone says what to change. The last line counts what the repository holds.
-
-Without ``--all`` the rules check only the files the branch changes. A project that
-adopts the standard with debt uses that mode and pays the debt down one changed file
-at a time, then moves to ``--all``. What "changed" means: the files the branch adds or
-changes against ``origin/main``, or against the ref or commit in ``CODE_RULES_BASE``
-(the python-lint workflow sets it). A renamed file is a changed file; a deleted one
-is not checked. When the base cannot be found, a CI run fails and says how to fetch
-it (without a base it would check nothing); outside CI it is a note.
+The rule: **every file is clean**, checked on every run. A breach in any file fails.
+There is no baseline, no changed-files mode and no flag that lets a finding pass. Each
+finding in a file that fails is printed with its line, its rule and how to fix it, so
+the log alone says what to change. The last line counts what the repository holds.
 
 ``--paths`` limits every check to some directories or files of the repository (the
-default is every tracked file).
-
-``--format-only`` is for a branch that only re-formats files. It proves that no code
-changed: every file the branch changes is a Python file that existed before, passes
-``ruff format --check``, and has the same syntax tree as before, so no behaviour can
-have changed. Two things a formatter may rewrite are compared by what they mean: a
-docstring by its text without its indentation, and ``del (a, b)`` as ``del a, b``.
+default is every tracked file). A project that adopts the standard with debt narrows
+it to the files that are clean, with the reason beside it, and widens it as it pays
+the debt down.
 
 Standard library only, apart from ruff, and ESLint and Prettier when asked for.
 """
@@ -65,10 +54,7 @@ Standard library only, apart from ruff, and ESLint and Prettier when asked for.
 from __future__ import annotations
 
 import argparse
-import ast
-import inspect
 import json
-import os
 import re
 import subprocess
 import sys
@@ -93,21 +79,22 @@ ESLINT_RULES = [
 ]
 ESLINT_FUNC_RE = re.compile(r"'([^']+)'")
 # No .svg: prettier has no SVG parser, so an icon would stop the whole run.
-PRETTIER_SUFFIXES = JS_SUFFIXES + tuple(".json .md .yml .yaml .css .html".split())
+PRETTIER_SUFFIXES = (*JS_SUFFIXES, ".json", ".md", ".yml", ".yaml", ".css", ".html")
 MAX_EXPLAINED = 50
 FIXES = {
-    "E501": "wrap the line to the project's line length (`ruff format` does not wrap "
-    "strings, comments or docstrings: split a string into two literals, re-wrap the "
-    "text)",
+    "B023": "pass the loop variable in as an argument (`lambda x=x: ...`), or build "
+    "the function outside the loop",
+    "B904": "raise it `from` the exception caught (`raise New(...) from err`), or "
+    "`from None` when the cause says nothing",
+    "B905": "add `strict=True` when the iterables must be the same length, "
+    "`strict=False` when the shortest may end the loop",
     "F401": "remove the import, or add the name to the module's `__all__` if it is "
     "re-exported",
     "F811": "remove the second definition; a shared pytest fixture goes in a "
     "conftest.py, not in an import",
     "RUF100": "remove the `# noqa`: the standard allows none",
 }
-BASE_ENV = "CODE_RULES_BASE"
-DEFAULT_BASE = "origin/main"
-OLD_BASELINE = "code_rules_baseline.json"
+SAFE_FIX = "`ruff check --fix` fixes it"
 noqa_comments = silencers.noqa_comments  # the first silencer: not allowed at all
 RUFF: dict[str, str] = {}  # the release the flags chose (ruff_version.py), set by main
 
@@ -187,7 +174,7 @@ def file_sizes(
 
 
 def ruff_cmd() -> list[str]:
-    """The ruff on PATH, or the release --ruff-version or --project-ruff chose."""
+    """The release --ruff-version or the project's pin chose, or the ruff on PATH."""
     return ruff_version.command(RUFF.get("version"))
 
 
@@ -234,6 +221,7 @@ def ruff_findings(
                 "col": place.get("column", 0),
                 "code": f.get("code") or "syntax",
                 "message": f.get("message") or "",
+                "safe_fix": (f.get("fix") or {}).get("applicability") == "safe",
             }
         )
     return found
@@ -363,7 +351,7 @@ def prettier_unformatted(root: Path, paths: tuple[str, ...]) -> list[str]:
     return sorted(set(found))
 
 
-def fix_for(code: str, tool: str = "ruff") -> str:
+def fix_for(code: str, tool: str = "ruff", safe_fix: bool | None = False) -> str:
     """How to fix a finding of this rule, in one sentence."""
     if tool == "eslint":
         if code in ESLINT_COMPLEXITY:
@@ -378,7 +366,13 @@ def fix_for(code: str, tool: str = "ruff") -> str:
         return FIXES[code]
     if code in COMPLEXITY:
         return "split the function into named helpers, each one step, in the same order"
+    if safe_fix:  # UP045, I001 and most of UP and I
+        return SAFE_FIX
     return f"`ruff rule {code}` explains the rule and its fix"
+
+
+def finding_fix(f: dict) -> str:
+    return fix_for(f["code"], f.get("tool", "ruff"), f.get("safe_fix"))
 
 
 def explained(found: list[dict], files: set[str]) -> list[str]:
@@ -389,7 +383,7 @@ def explained(found: list[dict], files: set[str]) -> list[str]:
     )
     out = [
         f"  {f['rel']}:{f['line']}:{f['col']}: {f['code']} {f['message']}. "
-        f"Fix: {f.get('fix') or fix_for(f['code'], f.get('tool', 'ruff'))}"
+        f"Fix: {f.get('fix') or finding_fix(f)}"
         for f in shown[:MAX_EXPLAINED]
     ]
     if len(shown) > MAX_EXPLAINED:
@@ -429,55 +423,6 @@ def unformatted(files: list[str], root: Path) -> list[str]:
     return sorted(set(found))
 
 
-def in_ci() -> bool:
-    """Whether this is a CI run (GitHub Actions sets both)."""
-    return bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
-
-
-def base_ref() -> str:
-    return os.environ.get(BASE_ENV) or DEFAULT_BASE
-
-
-def fetch_hint(base: str) -> str:
-    """The command that fetches the base into a shallow checkout."""
-    fetch = "git fetch --no-tags --depth=1 origin"
-    if base.startswith("origin/"):
-        return f"{fetch} +refs/heads/{base.removeprefix('origin/')}:refs/remotes/{base}"
-    return f"{fetch} {base}"
-
-
-def missing_base(what: str) -> str:
-    base = base_ref()
-    return (
-        f"base: {what}: `{base}` is not available. Fetch it (`{fetch_hint(base)}`) "
-        f"or set {BASE_ENV} to a commit that is present"
-    )
-
-
-def changed_files(root: Path) -> tuple[list[str] | None, str | None]:
-    """Files the branch adds or changes against the base; None and why if unknown."""
-    base = base_ref()
-    note = (
-        "code_rules: note: skipped the changed-file checks because "
-        f"`{base}` is not available"
-    )
-    if git_out(root, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}") is None:
-        return None, note
-    # --no-renames: a renamed file is an added file, so it is checked;
-    # --relative: paths from here, as `git ls-files` gives them
-    args = ("-z", "--name-only", "--no-renames", "--relative", "--diff-filter=AM")
-    out = None
-    # the working tree against the merge base, so that a local run sees what is not
-    # committed yet; a shallow CI checkout has no merge base: the base itself then
-    for spec in (("--merge-base", base), (base,)):
-        out = git_out(root, "diff", *args, *spec)
-        if out is not None:
-            break
-    if out is None:
-        return None, note
-    return sorted(f for f in out.split("\0") if f and (root / f).is_file()), None
-
-
 def findings_by_file(ruff: dict) -> dict[str, Counter]:
     """ruff's findings as {file: {rule: count}}."""
     out: dict[str, Counter] = {}
@@ -491,49 +436,17 @@ def detail(rules: Counter) -> str:
     return ", ".join(f"{rule} {n}" for rule, n in sorted(rules.items()))
 
 
-def rule_lines(kind: str, counts: dict, label: str, only: set[str] | None) -> list[str]:
-    tail = (
-        "; a file this pull request changes leaves clean" if kind == "changed" else ""
-    )
+def rule_lines(counts: dict, label: str, kind: str = "all") -> list[str]:
     return [
-        f"{kind}: {rel}: {sum(rules.values())} {label} finding(s) "
-        f"({detail(rules)}){tail}"
+        f"{kind}: {rel}: {sum(rules.values())} {label} finding(s) ({detail(rules)})"
         for rel, rules in sorted(findings_by_file(counts).items())
-        if only is None or rel in only
     ]
-
-
-def touched_problems(files: list[str], now: dict, root: Path) -> list[str]:
-    """A file the branch changes is clean: formatted, no finding, no noqa, not too
-    long."""
-    touched = set(files)
-    out = [
-        f"ruff-format: {rel}: fails `ruff format --check`: run `ruff format` on it "
-        "(a format-only commit first keeps the change readable)"
-        for rel in now["unformatted"] or ()
-        if rel in touched
-    ]
-    out += rule_lines("changed", now["ruff"], "ruff", touched)
-    out += rule_lines("changed", now.get("eslint") or {}, "eslint", touched)
-    out += [
-        f"prettier: {rel}: fails `prettier --check`: run `prettier --write` on it"
-        for rel in now.get("prettier") or ()
-        if rel in touched
-    ]
-    for rel, lines in sorted(now["lines"].items()):
-        if rel in touched:
-            out.append(
-                f"changed: {rel}: {lines} lines, over its limit "
-                f"{limit_for(rel, *now['limits'])}; split it in this pull request"
-            )
-    out += [line for line in now["config"] if problem_file(line) in touched]
-    return out + noqa_comments(sorted(touched & set(now["files"])), root)
 
 
 def all_problems(now: dict, root: Path) -> list[str]:
     """Every file that is not clean, one line for each reason."""
-    out = rule_lines("all", now["ruff"], "ruff", None)
-    out += rule_lines("all", now.get("eslint") or {}, "eslint", None)
+    out = rule_lines(now["ruff"], "ruff")
+    out += rule_lines(now.get("eslint") or {}, "eslint")
     out += [
         f"all: {rel}: {lines} lines, over its limit {limit_for(rel, *now['limits'])}"
         for rel, lines in sorted(now["lines"].items())
@@ -545,113 +458,6 @@ def all_problems(now: dict, root: Path) -> list[str]:
         f"all: {rel}: fails `prettier --check`" for rel in now.get("prettier") or ()
     ]
     return out + now["config"] + noqa_comments(now["files"], root)
-
-
-def changed_problems(now: dict, root: Path) -> tuple[list[str], list[str]]:
-    """(problems, notes) of the files this branch changes."""
-    changed, note = changed_files(root)
-    if changed is None:
-        if not in_ci():
-            return [], [note] if note else []
-        return [missing_base("cannot tell what this branch changed")], []
-    notes = [f"code_rules: {len(changed)} changed file(s) checked"]
-    return touched_problems(changed, now, root), notes
-
-
-def syntax_tree(source: str) -> str:
-    """The syntax tree of a Python file, as text, without what a formatter may change.
-
-    A docstring is compared by its text without its indentation and trailing blanks,
-    and ``del (a, b)`` is the same statement as ``del a, b``.
-    """
-    tree = ast.parse(source)
-    scopes = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
-    for node in ast.walk(tree):
-        if isinstance(node, scopes) and node.body:
-            first = node.body[0]
-            value = getattr(first, "value", None)
-            if isinstance(first, ast.Expr) and isinstance(value, ast.Constant):
-                if isinstance(value.value, str):
-                    lines = inspect.cleandoc(value.value).splitlines()
-                    value.value = "\n".join(line.rstrip() for line in lines).strip()
-        if isinstance(node, ast.Delete):
-            flat: list[ast.expr] = []
-            for target in node.targets:
-                flat.extend(target.elts if isinstance(target, ast.Tuple) else [target])
-            node.targets = flat
-    return ast.dump(tree)
-
-
-def compared_commit(root: Path) -> str | None:
-    """What HEAD is compared with: its merge base with the base, or the base itself."""
-    base = base_ref()
-    commit = git_out(root, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}")
-    if commit is None:
-        return None
-    # a shallow CI checkout has no merge base: compare with the base's tree instead
-    merge_base = git_out(root, "merge-base", base, "HEAD")
-    return (merge_base or commit).strip()
-
-
-def same_code(root: Path, commit: str, rel: str) -> str | None:
-    """Why this file is more than a re-format of what it was, or None when it is not."""
-    old = git_out(root, "show", f"{commit}:./{rel}")
-    new = git_out(root, "show", f"HEAD:./{rel}")
-    if old is None or new is None:
-        return "its content cannot be read from git"
-    try:
-        before, after = syntax_tree(old), syntax_tree(new)
-    except SyntaxError as e:
-        return f"it does not parse ({e.msg}, line {e.lineno})"
-    if before != after:
-        return "its code changed (the syntax tree is not the one it had)"
-    return None
-
-
-def format_only_problems(root: Path) -> tuple[list[str], list[str]]:
-    """(problems, notes): this branch re-formats Python files and does nothing else."""
-    commit = compared_commit(root)
-    diff = commit and git_out(
-        root,
-        "diff",
-        "-z",
-        "--name-status",
-        "--no-renames",
-        "--relative",
-        commit,
-        "HEAD",
-    )
-    if not commit or diff is None:
-        return [missing_base("cannot prove a format-only change")], []
-    what = {"A": "is added", "D": "is deleted"}
-    problems, python = [], []
-    fields = diff.split("\0")
-    for status, rel in zip(fields[0::2], fields[1::2]):
-        if status != "M":
-            did = what.get(status, f"has status {status}")
-            problems.append(
-                f"format-only: {rel}: {did}; a format-only pull request changes "
-                "only the layout of files that were there"
-            )
-        elif not rel.endswith(".py"):
-            problems.append(
-                f"format-only: {rel}: is not a Python file; a format-only pull "
-                "request changes nothing else"
-            )
-        else:
-            why = same_code(root, commit, rel)
-            if why:
-                problems.append(f"format-only: {rel}: {why}")
-            else:  # it parses: ruff can say whether it is formatted
-                python.append(rel)
-    problems += [
-        f"ruff-format: {rel}: fails `ruff format --check`: run `ruff format` on it"
-        for rel in unformatted(python, root)
-    ]
-    return problems, [
-        f"code_rules: format-only: {len(python)} re-formatted file(s), each with "
-        "the syntax tree it had"
-    ]
 
 
 def measure(root: Path, a: argparse.Namespace) -> dict:
@@ -705,22 +511,15 @@ def parse_args(argv) -> argparse.Namespace:
     )
     ap.add_argument("--max-lines", type=int, default=800)
     ap.add_argument("--max-test-lines", type=int, default=1200)
-    ap.add_argument(
-        "--all",
-        action="store_true",
-        help="check every file, not only the files this branch changes",
-    )
+    # v2's "every file": now the only way. Accepted, and ignored, so that a v2 hook's
+    # `args: [--all]` keeps working; it goes in v4.
+    ap.add_argument("--all", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument(
         "--paths",
         nargs="+",
         default=[],
         metavar="PATH",
         help="check only these directories or files (default: every tracked file)",
-    )
-    ap.add_argument(
-        "--format-only",
-        action="store_true",
-        help="prove that this branch only re-formats Python files",
     )
     ap.add_argument(
         "--no-format",
@@ -735,17 +534,12 @@ def parse_args(argv) -> argparse.Namespace:
     ap.add_argument(
         "--prettier",
         action="store_true",
-        help="also run prettier --check, in the same scope as the mode",
+        help="also run prettier --check, on every file in --paths",
     )
-    ap.add_argument("--no-inline-config", action="store_true", help=config.INLINE_HELP)
-    ap.add_argument("--silencers", action="store_true", help=silencers.HELP)
-    ruff_version.add_arguments(ap)  # --ruff-version and --project-ruff
-    a = ap.parse_args(argv)
-    if a.all and a.format_only:
-        ap.error("--all and --format-only are two different checks")
-    if a.format_only:
-        a.no_format = False  # the proof needs the format check
-    return a
+    config.add_arguments(ap)  # --inline-config
+    silencers.add_arguments(ap)  # --silencers, --no-silencers
+    ruff_version.add_arguments(ap)  # --ruff-version, --project-ruff, --no-project-ruff
+    return ap.parse_args(argv)
 
 
 def problem_file(line: str) -> str:
@@ -760,25 +554,12 @@ def main(argv=None) -> int:
     RUFF.clear()
     RUFF.update(ruff_version.chosen(root, a.ruff_version, a.project_ruff))
     now = measure(root, a)
-    notes = config.notes(now)
-    if (root / OLD_BASELINE).exists():
-        notes.append(
-            f"code_rules: note: {OLD_BASELINE} is no longer read (every file a pull "
-            "request changes must be clean instead); delete it"
-        )
-    if a.all:
-        problems = all_problems(now, root)
-    elif a.format_only:
-        problems, more = format_only_problems(root)
-        notes += more
-    else:
-        problems, more = changed_problems(now, root)
-        notes += more
-    reported = {problem_file(line) for line in problems}
-    for line in (*problems, *explained(now["found"], reported), *notes):
+    found = all_problems(now, root)
+    reported = {problem_file(line) for line in found}
+    for line in (*found, *explained(now["found"], reported), *config.notes(now)):
         print(line)
-    print(summary(now, problems))
-    return 1 if problems else 0
+    print(summary(now, found))
+    return 1 if found else 0
 
 
 if __name__ == "__main__":

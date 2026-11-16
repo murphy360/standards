@@ -3,7 +3,7 @@
 # release. A caller that passes shellcheck-version gets that release by its tag.
 #   jobs:
 #     shell:
-#       uses: murphy360/standards/.github/workflows/shell-lint.yml@v2
+#       uses: murphy360/standards/.github/workflows/shell-lint.yml@v3
 name: shell-lint
 on:
   workflow_call:
@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 10
     steps:
       # The tools come from the commit this workflow file was called at, so a workflow and its tools never disagree.
-      # job.workflow_sha is that commit: what @v2 or @<sha> resolved to in a project, and the commit under test in
+      # job.workflow_sha is that commit: what @v3 or @<sha> resolved to in a project, and the commit under test in
       # this repository's own ci.yml. It is read through toJSON because actionlint 1.7.12 does not know the property
       # yet. The checkout goes to the runner's temp directory, so nothing is added to the project's workspace.
       - name: The standards' tools, from the commit this workflow was called at

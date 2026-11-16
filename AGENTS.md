@@ -9,8 +9,8 @@ This repository is the standard every murphy360 project follows (README.md). Cha
 - A new action under `actions/` comes with a step in ci.yml's `checks` job, by local path (`uses: ./actions/<name>`).
   The shell of a step lives in `tools/steps/`, where the reusable workflow and the action both run it, and a test
   runs the script itself. No workflow and no action holds a second copy.
-- Versioning: projects pin the major tag (`@v2`). A compatible change moves that tag after a `v2.x.y` release; a
-  breaking change is the next major (`v3`), with release notes saying what a project must change. Never move a tag to a commit that fails CI.
+- Versioning: projects pin the major tag (`@v3`). A compatible change moves that tag after a `v3.x.y` release; a
+  breaking change is the next major (`v4`), with release notes saying what a project must change. Never move a tag to a commit that fails CI.
 - Every action stays pinned to a commit SHA with its version in a comment; Dependabot updates them.
 - After a release, set the `murphy360/standards` rev in `templates/pre-commit-config.yaml` to the released commit,
   with its version in the comment: a commit cannot name itself, so the template follows one step behind.

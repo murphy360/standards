@@ -1,54 +1,46 @@
-# Python lint (tools/code_rules.py): ruff with the project's config plus the standard complexity limits, no noqa, and
-# the file-size limit. The standard is that every file is clean: mode all (the default) checks every file on every
-# run, and a finding anywhere fails. Each finding is printed with its line, its rule and how to fix it. Call it from a
-# project:
+# Python lint (tools/code_rules.py): ruff with the project's config plus the standard's rules (F, E4, E7, E9, B
+# without B008, UP, SIM, I, and the complexity limits C901 and PLR0915), no noqa, every silencer with its reason, and
+# the file-size limit. The standard is that every file is clean: every run checks every file in `paths`, and a
+# finding anywhere fails. Each finding is printed with its line, its rule and how to fix it. Call it from a project:
 #   jobs:
 #     lint:
-#       uses: murphy360/standards/.github/workflows/python-lint.yml@v2
+#       uses: murphy360/standards/.github/workflows/python-lint.yml@v3
 #       with:
 #         format-check: true
-#         # mode: changed     # a project still paying down its debt: every file a change touches must be clean
-#         # paths: src tools  # only these directories (default: every tracked file)
-#         # silencers: true   # every skip, xfail, type ignore and the like carries its reason; the default in v3
-#         # project-ruff: true  # lint with the ruff the project pins (ruff==<version>); the default in v3
-#         # format-only: ${{ contains(github.event.pull_request.labels.*.name, 'format-only') }}
+#         # paths: src tools  # only these directories (default: every tracked file); a project with debt says why
+#         # silencers: false  # no check that every skip, xfail, type ignore and the like carries its reason
+#         # project-ruff: false  # lint with the standard's default ruff, not the one the project pins
 #
-# The base. A pull request is compared with the first parent of the merge commit the job checks out: the base branch
-# as the pull request was merged with it (the pull request's base SHA when HEAD is not a merge commit). A push is
-# compared with the commit before the push. The step exports it as CODE_RULES_BASE. Mode changed needs it; with no
-# base (a schedule, a dispatch, a new branch or tag) mode changed checks every file. format-only (a pull request that
-# only re-formats) also needs it: it proves that every file the pull request changes is a Python file with the syntax
-# tree it had.
+# A project with debt. There is no changed-files mode: a project that adopts the standard with findings left narrows
+# `paths` to the directories that are clean, writes the reason beside it, and widens it as it pays the debt down.
 #
 # The project's ruff config. It may add rules, set the line length and exclude files. It cannot switch a standard
 # rule off: a standard finding under per-file-ignores or lint.exclude is reported like any other, and an
 # extend-per-file-ignores entry that names a standard rule is a problem. Every tracked Python file ruff does not
 # check is printed by name on every run, and the last line counts them. That is information, not a failure.
 #
-# silencers. With silencers: true, each way to turn a check off in a file carries its reason: a pytest skip or xfail
-# its reason=, a type ignore its error code and a comment, a pragma: no cover and a shellcheck disable a comment on
-# the line above. The last line counts the silencers left. It needs no base: mode all checks every file, mode
-# changed the files a change touches. Off by default in v2.
+# silencers. Each way to turn a check off in a file carries its reason: a pytest skip or xfail its reason=, a type
+# ignore its error code and a comment, a pragma: no cover and a shellcheck disable a comment on the line above. The
+# last line counts the silencers left. On by default since v3; silencers: false leaves it out.
 #
-# Which ruff. The standard's default is written once, in this repository's pyproject.toml, and Dependabot moves it
-# there. With project-ruff: true the project pins its own: a `ruff==<version>` line in requirements-dev.txt, in
-# another requirements*.txt, or in a dependency group or an extra of its pyproject.toml, read in the directory the
-# lint runs in (tools/ruff_version.py). Dependabot's pull request in the project then moves the pin, and that pull
-# request is where the new release's findings show up, alone. A project that pins none gets the default. The
-# ruff-version input wins over both. The run prints the release and where it comes from. Off by default in v2.
+# Which ruff. The project pins its own: a `ruff==<version>` line in requirements-dev.txt, in another
+# requirements*.txt, or in a dependency group or an extra of its pyproject.toml, read in the directory the lint runs
+# in (tools/ruff_version.py). Dependabot's pull request in the project then moves the pin, and that pull request is
+# where the new release's findings show up, alone. A project that pins none gets the standard's default, which is
+# written once, in this repository's pyproject.toml. The ruff-version input wins over both, and project-ruff: false
+# takes the default even where the project pins one. The run prints the release and where it comes from. The
+# project's pin is the default since v3.
 name: python-lint
 on:
   workflow_call:
     inputs:
       runs-on: {type: string, default: "ubuntu-latest", description: "a runner label, or a JSON list of labels (a self-hosted runner)"}
       ruff-version: {type: string, default: "", description: "one ruff release, by its version number; it wins over the project's pin (default: project-ruff decides)"}
-      project-ruff: {type: boolean, default: false, description: "lint with the ruff the project pins (ruff==<version> in its requirements*.txt or pyproject.toml), and with the standard's default when it pins none"}
+      project-ruff: {type: boolean, default: true, description: "lint with the ruff the project pins (ruff==<version> in its requirements*.txt or pyproject.toml), and with the standard's default when it pins none; false: the standard's default"}
       python-version: {type: string, default: "3.12"}
-      format-check: {type: boolean, default: false, description: "also check ruff format, in the same scope as mode"}
-      mode: {type: string, default: "all", description: "all: every file must be clean; changed: every file the change touches"}
+      format-check: {type: boolean, default: false, description: "also check ruff format, on every file in paths"}
       paths: {type: string, default: "", description: "space-separated directories or files to check (default: every tracked file)"}
-      format-only: {type: boolean, default: false, description: "also prove that this pull request only re-formats Python files"}
-      silencers: {type: boolean, default: false, description: "a skip, an xfail, a type ignore, a pragma: no cover and a shellcheck disable each need a reason, .only fails, and the last line counts them"}
+      silencers: {type: boolean, default: true, description: "a skip, an xfail, a type ignore, a pragma: no cover and a shellcheck disable each need a reason, .only fails, and the last line counts them"}
       working-directory: {type: string, default: "."}
       standards-ref:
         type: string
@@ -68,7 +60,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       # The tools come from the commit this workflow file was called at, so a workflow and its tools never disagree.
-      # job.workflow_sha is that commit: what @v2 or @<sha> resolved to in a project, and the commit under test in
+      # job.workflow_sha is that commit: what @v3 or @<sha> resolved to in a project, and the commit under test in
       # this repository's own ci.yml. It is read through toJSON because actionlint 1.7.12 does not know the property
       # yet. The checkout goes to the runner's temp directory, so nothing is added to the project's workspace.
       - name: The standards' tools, from the commit this workflow was called at
@@ -106,14 +98,9 @@ jobs:
       # The step prints the release and where it comes from. The lint step reads the same two values (the job's env).
       - name: ruff (the caller's version, the project's pin, or the standard's default)
         run: python3 "$RUNNER_TEMP/standards/tools/ruff_version.py" --install
-      - name: Code rules (every file, or the files a change touches); ruff, no noqa, complexity, file size, format
+      - name: Code rules (every file); ruff, no noqa, complexity, silencers, file size, format
         env:
-          MODE: ${{ inputs.mode }}
           FORMAT_CHECK: ${{ inputs.format-check }}
-          FORMAT_ONLY: ${{ inputs.format-only }}
           SILENCERS: ${{ inputs.silencers }}
           PATHS: ${{ inputs.paths }}
-          EVENT: ${{ github.event_name }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
         run: bash "$RUNNER_TEMP/standards/tools/steps/code-rules.sh" python

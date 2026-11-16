@@ -1,8 +1,7 @@
 # The standards repository checks itself with its own workflows, and tests its tools.
-# `lint` runs python-lint in its default mode, all (every file), and `lint-changed` in mode changed (the files a
-# change touches): this repository is clean, and a change to the workflow is tried in both modes before any project
-# takes it. One run per ref (concurrency, below), and the new checks (check-pr-template, check-pre-commit-config)
-# are turned on here to prove the opt-in flags work, since this repository now carries both files itself.
+# `lint` runs python-lint as a project gets it by default: every file, every silencer with its reason, the ruff the
+# project pins. `standards` runs standards-check with every check on but the three this repository cannot pass, each
+# turned off with its reason. One run per ref (concurrency, below).
 # `node`, `test-docker` and `image` run the other three workflows on the small projects in tests/fixtures, so that
 # every workflow this repository ships runs here before a tag moves. `image` only builds: nothing is published here.
 # `lint-pinned` runs python-lint on the fixture that pins its own, newer ruff (project-ruff).
@@ -27,22 +26,14 @@ jobs:
     uses: ./.github/workflows/python-lint.yml
     with:
       format-check: true
-      silencers: true   # every skip, type ignore and shellcheck disable here carries its reason
-  lint-changed:
-    uses: ./.github/workflows/python-lint.yml
-    with:
-      format-check: true
-      mode: changed
-      silencers: true
   # A project that pins its own ruff: the fixture's requirements-dev.txt names a newer release than the default.
-  # The log prints the release and the file that names it, and with project-ruff the tool runs no other release:
-  # it asks the ruff it found for its version first. The `hook` job proves the same on a file that only the
+  # The log prints the release and the file that names it, and the tool runs no other release (project-ruff is the
+  # default): it asks the ruff it found for its version first. The `hook` job proves the same on a file that only the
   # pinned release leaves as it is.
   lint-pinned:
     uses: ./.github/workflows/python-lint.yml
     with:
       format-check: true
-      project-ruff: true
       working-directory: tests/fixtures/python-project
   shell:
     uses: ./.github/workflows/shell-lint.yml
@@ -53,19 +44,19 @@ jobs:
   standards:
     uses: ./.github/workflows/standards-check.yml
     with:
-      check-pr-template: true
-      check-pre-commit-config: true
-      check-ticket-template: true   # this repository files its tickets from its own template
-      # check-templates stays off: this repository's AGENTS.md is its own text, not a copy of templates/AGENTS.md.
-      # tests/test_templates.py runs this workflow's step with it on, against a project made from the templates.
-      # check-ruff-version stays off too: this repository holds two ruff versions on purpose, the default and the
-      # newer one its python-lint fixture pins. tests/test_ruff_version.py runs the step with it on.
+      # This repository's AGENTS.md is its own text, not a copy of templates/AGENTS.md. tests/test_templates.py runs
+      # this workflow's step with the check on, against a project made from the templates.
+      check-templates: false
+      # This repository holds two ruff versions on purpose, the default and the newer one its python-lint fixture
+      # pins. tests/test_ruff_version.py runs the step with the check on.
+      check-ruff-version: false
+      # This repository keeps the agent settings as templates (templates/claude/) and does not copy them for its own
+      # sessions. tests/test_agent_settings.py tests the check itself.
+      check-agent-settings: false
   node:
     uses: ./.github/workflows/node-lint.yml
     with:
-      format-check: true
-      no-inline-config: true   # the opt-in is tried here: ESLint takes the flag, and the fixture has no disable comment
-      silencers: true          # tried here too: the step passes the flag, and the fixture has no silencer
+      format-check: true   # no-inline-config and silencers are on by default: the fixture has no disable comment
       working-directory: tests/fixtures/node-project
   test-docker:
     uses: ./.github/workflows/test-docker.yml
@@ -116,18 +107,15 @@ jobs:
       - uses: ./actions/checks
         with:
           format-check: true
-          silencers: true
-          check-pr-template: true
-          check-pre-commit-config: true
-          check-ticket-template: true
+          check-templates: false   # the three checks `standards` turns off, for the reasons given there
+          check-ruff-version: false
+          check-agent-settings: false
       - if: ${{ !cancelled() }}
         uses: ./actions/checks
         with:
           checks: node-lint
           working-directory: tests/fixtures/node-project
           format-check: true
-          no-inline-config: true
-          silencers: true
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -142,8 +130,8 @@ jobs:
       - run: python3 -m pytest -q tests
   # The code-rules hook, built by pre-commit from this commit as a project would build it, on a scratch project that
   # breaks three rules: it must print what tools/code_rules.py prints. Then again on a project that pins a newer
-  # ruff, with --project-ruff: the hook and the tool must run that release, which leaves alone a file the default
-  # would re-format. It needs the network, so it is no pytest test.
+  # ruff, which the hook runs by default: the hook and the tool must run that release, which leaves alone a file the
+  # default would re-format. It needs the network, so it is no pytest test.
   hook:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -157,7 +145,7 @@ jobs:
   result:
     name: result
     if: always()
-    needs: [lint, lint-changed, lint-pinned, shell, workflows, standards, node, test-docker, image, types, types-python, types-node, secret-scan, secret-scan-history, checks, tests, hook]
+    needs: [lint, lint-pinned, shell, workflows, standards, node, test-docker, image, types, types-python, types-node, secret-scan, secret-scan-history, checks, tests, hook]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

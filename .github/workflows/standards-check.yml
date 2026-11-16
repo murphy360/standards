@@ -1,16 +1,16 @@
 # Does the calling project follow the standards? Dependabot covers its ecosystems, every action is pinned to a
-# commit SHA, and an instruction file exists, AGENTS.md or CLAUDE.md (tools/check_standards.py). Six more checks
-# exist but default off, so a project already pinned at @v2 sees no new failure until it turns one on:
+# commit SHA, and an instruction file exists, AGENTS.md or CLAUDE.md (tools/check_standards.py). Six more checks run
+# by default since v3; `false` turns one off, with the reason beside it:
 #   jobs:
 #     standards:
-#       uses: murphy360/standards/.github/workflows/standards-check.yml@v2
+#       uses: murphy360/standards/.github/workflows/standards-check.yml@v3
 #       with:
-#         check-pr-template: true        # also requires .github/pull_request_template.md
-#         check-pre-commit-config: true  # also requires .pre-commit-config.yaml
-#         check-ticket-template: true    # also requires an issue template in .github/ISSUE_TEMPLATE
-#         check-templates: true          # the shared text of AGENTS.md is the template's; a job is named result
-#         check-agent-settings: true     # also requires .claude/settings.json with the guard hook, and its guard
-#         check-ruff-version: true       # every ruff version the project names is the same one: local equals CI
+#         # check-pr-template: false        # requires .github/pull_request_template.md
+#         # check-pre-commit-config: false  # requires .pre-commit-config.yaml
+#         # check-ticket-template: false    # requires an issue template in .github/ISSUE_TEMPLATE
+#         # check-templates: false          # the shared text of AGENTS.md is the template's; a job is named result
+#         # check-agent-settings: false     # requires .claude/settings.json with the guard hook, and its guard
+#         # check-ruff-version: false       # every ruff version the project names is the same one: local equals CI
 name: standards-check
 on:
   workflow_call:
@@ -22,28 +22,28 @@ on:
         description: "deprecated: the tools come from the commit this workflow is called at; read only if GitHub does not name it"
       check-pr-template:
         type: boolean
-        default: false
-        description: "also require .github/pull_request_template.md (opt-in, added in v2.1.0)"
+        default: true
+        description: "also require .github/pull_request_template.md (on by default since v3)"
       check-pre-commit-config:
         type: boolean
-        default: false
-        description: "also require .pre-commit-config.yaml (opt-in, added in v2.1.0)"
+        default: true
+        description: "also require .pre-commit-config.yaml (on by default since v3)"
       check-ticket-template:
         type: boolean
-        default: false
-        description: "also require an issue template in .github/ISSUE_TEMPLATE, *.md or *.yml (opt-in)"
+        default: true
+        description: "also require an issue template in .github/ISSUE_TEMPLATE, *.md or *.yml (on by default since v3)"
       check-templates:
         type: boolean
-        default: false
-        description: "also require the shared text of AGENTS.md or CLAUDE.md to be the template's, a CLAUDE.md beside an AGENTS.md to import it, and a CI job named result (opt-in)"
+        default: true
+        description: "also require the shared text of AGENTS.md or CLAUDE.md to be the template's, a CLAUDE.md beside an AGENTS.md to import it, and a CI job named result (on by default since v3)"
       check-agent-settings:
         type: boolean
-        default: false
-        description: "also require .claude/settings.json with the guard hook, and the guard file it names (opt-in)"
+        default: true
+        description: "also require .claude/settings.json with the guard hook, and the guard file it names (on by default since v3)"
       check-ruff-version:
         type: boolean
-        default: false
-        description: "also require every ruff version the project names (its requirements, its pre-commit config, its lint jobs) to be the same one (opt-in)"
+        default: true
+        description: "also require every ruff version the project names (its requirements, its pre-commit config, its lint jobs) to be the same one (on by default since v3)"
 permissions:
   contents: read
 jobs:
@@ -52,7 +52,7 @@ jobs:
     timeout-minutes: 10
     steps:
       # The tools come from the commit this workflow file was called at, so a workflow and its tools never disagree.
-      # job.workflow_sha is that commit: what @v2 or @<sha> resolved to in a project, and the commit under test in
+      # job.workflow_sha is that commit: what @v3 or @<sha> resolved to in a project, and the commit under test in
       # this repository's own ci.yml. It is read through toJSON because actionlint 1.7.12 does not know the property
       # yet. The checkout goes to the runner's temp directory, so nothing is added to the project's workspace.
       - name: The standards' tools, from the commit this workflow was called at

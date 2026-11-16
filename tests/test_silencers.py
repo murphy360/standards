@@ -1,4 +1,5 @@
-"""Every silencer carries its reason, and the summary counts them (--silencers).
+"""Every silencer carries its reason, and the summary counts them (on by default since
+v3; --no-silencers leaves it out).
 
 A silencer reaches a green run without fixing anything: a pytest skip or xfail, a
 type ignore, a coverage pragma, a shellcheck directive, a `.skip` or `.only` in a
@@ -51,12 +52,6 @@ rules = load("code_rules")
 silencers = rules.silencers
 
 
-@pytest.fixture(autouse=True)
-def outside_ci(monkeypatch):
-    for name in ("CI", "GITHUB_ACTIONS", "CODE_RULES_BASE"):
-        monkeypatch.delenv(name, raising=False)
-
-
 def git(root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=root, capture_output=True, text=True, check=True
@@ -76,19 +71,19 @@ def commit(root: Path, message: str):
 
 
 def repo(root: Path, files: dict) -> Path:
-    """A git repository holding ``files``, committed, and called origin/main."""
+    """A git repository holding ``files``, committed."""
     root.mkdir(parents=True, exist_ok=True)
     write(root, {"ruff.toml": "# ruff's defaults\n", **files})
     git(root, "init", "-q", "-b", "main")
     git(root, "config", "user.name", "Standards Tests")
     git(root, "config", "user.email", "tests@example.com")
     commit(root, "base")
-    git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
     return root
 
 
 def run(root: Path, *args: str) -> int:
-    return rules.main(["--root", str(root), "--no-format", *args])
+    """The ruff on PATH (--no-project-ruff), so that the output is the rules' alone."""
+    return rules.main(["--root", str(root), "--no-format", "--no-project-ruff", *args])
 
 
 def brief(found: list) -> list:
@@ -115,9 +110,10 @@ def test_the_tool_finds_the_module_and_offers_the_flag(tmp_path):
         text=True,
     )
     assert res.returncode == 0, res.stderr
-    assert "--silencers" in res.stdout
-    assert rules.parse_args([]).silencers is False
-    assert rules.parse_args(["--silencers"]).silencers is True
+    assert "--silencers" in res.stdout and "--no-silencers" in res.stdout
+    assert rules.parse_args([]).silencers is True  # the default since v3
+    assert rules.parse_args(["--silencers"]).silencers is True  # v2's flag
+    assert rules.parse_args(["--no-silencers"]).silencers is False
     # the check for the one silencer that is never allowed moved here; it still runs
     assert rules.noqa_comments is silencers.noqa_comments
 
@@ -551,7 +547,7 @@ def test_only_a_javascript_or_typescript_test_file_is_read_for_them(
     assert len(silencers.scan(tmp_path, [rel])) == (1 if is_test else 0)
 
 
-# the run: problem lines, the count, the two modes
+# the run: problem lines, the count
 
 
 PYTHON_TEST = """import pytest
@@ -593,7 +589,7 @@ def test_each_silencer_without_its_reason_is_a_problem_line_with_its_fix(
     tmp_path, capsys
 ):
     root = repo(tmp_path, EVERY_KIND)
-    assert run(root, "--all", "--silencers") == 1
+    assert run(root) == 1
     out = capsys.readouterr().out.splitlines()
     assert out[:-1] == [
         f"silencer: .github/workflows/ci.yml:2: `{DIRECTIVE}` {ABOVE}, {SHELL_FIX}",
@@ -625,42 +621,18 @@ def test_a_silencer_with_its_reason_passes_and_is_counted(tmp_path, capsys):
         "web/a.test.ts": SKIPPED,
     }
     root = repo(tmp_path, files)
-    assert run(root, "--all", "--silencers") == 0
+    assert run(root) == 0
     assert capsys.readouterr().out == f"{QUIET}, 5 silencer(s))\n"
 
 
 @needs_ruff
-def test_without_the_flag_the_run_is_what_it_was(tmp_path, capsys):
-    """Byte for byte: no problem, no count, in either mode."""
+def test_no_silencers_leaves_the_check_out(tmp_path, capsys):
+    """Byte for byte what v2 printed without the flag: no problem, no count."""
     root = repo(tmp_path, EVERY_KIND)
-    assert run(root, "--all") == 0
+    assert run(root, "--no-silencers") == 0
     assert capsys.readouterr().out == f"{QUIET})\n"
-    write(root, {"run.sh": UNQUOTED + "echo $2\n"})
-    commit(root, "touch a file with a silencer")
-    assert run(root) == 0
-    assert (
-        capsys.readouterr().out == f"code_rules: 1 changed file(s) checked\n{QUIET})\n"
-    )
-    assert rules.measure(root, rules.parse_args(["--all"]))["silencers"] is None
-
-
-def test_in_mode_changed_only_a_changed_file_fails_and_every_silencer_is_counted(
-    tmp_path, capsys
-):
-    """No Python file, so ruff is not asked: the check needs no base of its own."""
-    root = repo(tmp_path, {"old.sh": UNQUOTED, "new.sh": "#!/bin/sh\necho hello\n"})
-    write(root, {"new.sh": UNQUOTED, "web/a.test.js": "test.only('a', () => {});\n"})
-    commit(root, "two files with a silencer")
-    assert run(root, "--silencers") == 1
-    out = capsys.readouterr().out
-    assert "silencer: new.sh:2: " in out and "silencer: web/a.test.js:1: " in out
-    assert "old.sh" not in out
-    assert out.splitlines()[-1] == (
-        "code_rules: FAILED, 2 problem(s) (left in the repository: 0 finding(s), "
-        "0 file(s) over the size limit, 3 silencer(s))"
-    )
-    assert run(root, "--all", "--silencers") == 1
-    assert "silencer: old.sh:2: " in capsys.readouterr().out
+    a = rules.parse_args(["--no-silencers"])
+    assert rules.measure(root, a)["silencers"] is None
 
 
 def test_vendored_code_and_files_outside_paths_are_not_read(tmp_path, capsys):
@@ -671,9 +643,7 @@ def test_vendored_code_and_files_outside_paths_are_not_read(tmp_path, capsys):
         "node_modules/x/a.test.js": "it.only('a', () => {});\n",
     }
     root = repo(tmp_path, files)
-    assert (
-        run(root, "--all", "--silencers", "--paths", "src", "web", "node_modules") == 1
-    )
+    assert run(root, "--paths", "src", "web", "node_modules") == 1
     out = capsys.readouterr().out
     assert out.count("silencer: ") == 1 and "silencer: src/run.sh:2: " in out
     assert out.endswith(", 1 silencer(s))\n")
@@ -682,20 +652,21 @@ def test_vendored_code_and_files_outside_paths_are_not_read(tmp_path, capsys):
 def test_an_eslint_disable_comment_is_counted_and_stays_the_other_flags_problem(
     tmp_path, capsys
 ):
-    """Counted here; a problem only under --no-inline-config, and only once."""
+    """Counted here; a problem of the ESLint check (--no-inline-config, the default),
+    and only once."""
     files = {
         "src/a.ts": "// eslint-disable-next-line no-console\nconsole.log(1);\n",
         "src/a.test.ts": SKIPPED,
         ".gitignore": "node_modules/\n",
     }
     root = repo(tmp_path, files)
-    assert run(root, "--all", "--silencers") == 0
+    assert run(root) == 0
     assert capsys.readouterr().out == f"{QUIET}, 2 silencer(s))\n"
     exe = root / "node_modules" / ".bin" / "eslint"
     exe.parent.mkdir(parents=True)
     exe.write_text("#!/bin/sh\necho '[]'\n")
     exe.chmod(0o755)
-    assert run(root, "--all", "--silencers", "--eslint", "--no-inline-config") == 1
+    assert run(root, "--eslint") == 1
     out = capsys.readouterr().out
     assert out.count("src/a.ts:1") == 1 and "eslint-disable: src/a.ts:1: " in out
     assert "FAILED, 1 problem(s)" in out and out.endswith(", 2 silencer(s))\n")
@@ -704,11 +675,10 @@ def test_an_eslint_disable_comment_is_counted_and_stays_the_other_flags_problem(
 # this repository, its workflows, its template and its README
 
 
-def test_this_repository_has_the_flag_on_and_every_silencer_here_has_its_reason():
+def test_this_repository_has_the_check_on_and_every_silencer_here_has_its_reason():
     ci = (WORKFLOWS / "ci.yml").read_text()
-    lint = ci.split("\n  lint:\n", 1)[1].split("\n  lint-changed:\n", 1)[0]
-    assert "      silencers: true" in lint
-    a = rules.parse_args(["--all", "--silencers"])
+    assert "silencers:" not in ci  # the default: on
+    a = rules.parse_args([])
     problems, count = silencers.measure(ROOT, set(rules.tracked_files(ROOT)), a)
     assert problems == []
     assert count >= 2  # at least this file's own mark and image.yml's directive
@@ -720,19 +690,17 @@ LANGUAGE = {"python-lint.yml": "python", "node-lint.yml": "node"}
 
 
 @pytest.mark.parametrize("workflow", ["python-lint.yml", "node-lint.yml"])
-def test_both_lint_workflows_take_the_input_and_it_is_off_by_default(workflow):
+def test_both_lint_workflows_take_the_input_and_it_is_on_by_default(workflow):
     text = (WORKFLOWS / workflow).read_text()
-    assert "\n      silencers: {type: boolean, default: false, description:" in text
+    assert "\n      silencers: {type: boolean, default: true, description:" in text
     assert "          SILENCERS: ${{ inputs.silencers }}\n" in text
     run = f'tools/steps/code-rules.sh" {LANGUAGE[workflow]}\n'
     assert text.endswith(run)  # the step is the script, and nothing after it
-    assert '[ "$SILENCERS" != true ] || args+=(--silencers)\n' in STEP.read_text()
+    assert '[ "$SILENCERS" != false ] || args+=(--no-silencers)\n' in (STEP.read_text())
 
 
 @pytest.mark.parametrize("workflow", ["python-lint.yml", "node-lint.yml"])
-@pytest.mark.parametrize(
-    "given, fails", [("true", True), ("false", False), ("", False)]
-)
+@pytest.mark.parametrize("given, fails", [("true", True), ("false", False), ("", True)])
 def test_the_step_passes_the_flag_to_the_tool(tmp_path, workflow, given, fails):
     """The step's own script. No Python file, so no ruff; ESLint is a script."""
     root = repo(
@@ -745,16 +713,10 @@ def test_the_step_passes_the_flag_to_the_tool(tmp_path, workflow, given, fails):
     env = {
         "PATH": os.environ["PATH"],
         "HOME": str(tmp_path),
-        "CI": "true",
-        "MODE": "all",
         "FORMAT_CHECK": "false",
-        "FORMAT_ONLY": "false",
         "NO_INLINE_CONFIG": "false",
         "SILENCERS": given,
         "PATHS": "",
-        "EVENT": "schedule",
-        "PR_BASE": "",
-        "BEFORE": "",
     }
     res = subprocess.run(
         ["bash", str(STEP), LANGUAGE[workflow]],
@@ -771,11 +733,8 @@ def test_the_step_passes_the_flag_to_the_tool(tmp_path, workflow, given, fails):
 
 def test_the_template_and_the_readme_carry_the_flag():
     template = (ROOT / "templates" / "ci.yml").read_text()
-    assert "\n          # silencers: true  # " in template  # a commented line: opt-in
-    assert (
-        "node-lint: a `.skip` in a test" in template
-    )  # and what it means for node-lint
+    assert "\n          # silencers: false " in template  # on unless turned off
     readme = (ROOT / "README.md").read_text()
     assert "- **Every silencer carries its reason.**" in readme
-    assert "`--silencers`" in readme and "`silencers: true`" in readme
+    assert "`--no-silencers`" in readme and "`silencers: false`" in readme
     assert "a removed test or a weakened assertion" in readme

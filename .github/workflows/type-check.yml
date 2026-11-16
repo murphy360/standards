@@ -1,11 +1,11 @@
 # Type check (tools/type_check.py): a call matches what it calls. A linter checks layout, size and complexity; it does
 # not check that a name, an argument or an attribute exists. A type checker does, in seconds, without running a test.
 # Each finding is printed with its line, its rule and how to fix it, in the form the code rules use.
-# A new workflow in v2: a project already pinned at @v2 sees nothing new until it calls it.
+# Added in v2: a project sees nothing until it calls it.
 # Call it from a project:
 #   jobs:
 #     types:
-#       uses: murphy360/standards/.github/workflows/type-check.yml@v2
+#       uses: murphy360/standards/.github/workflows/type-check.yml@v3
 #       with:
 #         install-command: pip install -r requirements.txt   # Python: what the code imports
 #         # language: typescript   # npm ci, then the project's own tsc --noEmit
@@ -50,7 +50,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       # The tools come from the commit this workflow file was called at, so a workflow and its tools never disagree.
-      # job.workflow_sha is that commit: what @v2 or @<sha> resolved to in a project, and the commit under test in
+      # job.workflow_sha is that commit: what @v3 or @<sha> resolved to in a project, and the commit under test in
       # this repository's own ci.yml. It is read through toJSON because actionlint 1.7.12 does not know the property
       # yet. The checkout goes to the runner's temp directory, so nothing is added to the project's workspace.
       - name: The standards' tools, from the commit this workflow was called at

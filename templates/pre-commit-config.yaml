@@ -3,8 +3,8 @@
 # shell-lint.yml's (0.11.0); actionlint at actionlint.yml's (1.7.12); gitleaks at secret-scan.yml's (8.30.1), built
 # from source at that commit, so a staged secret stops the commit; and the code rules python-lint runs, from
 # murphy360/standards itself, so that what passes here passes CI.
-# A project that pins its own ruff (`ruff==<version>` in requirements-dev.txt, `project-ruff: true` on its lint job)
-# sets the ruff-pre-commit rev to the commit of that release, and gives the code-rules hook `--project-ruff`.
+# A project that pins its own ruff (`ruff==<version>` in requirements-dev.txt) sets the ruff-pre-commit rev to the
+# commit of that release: the code-rules hook and the lint job run the project's pin already.
 #
 #   pip install pre-commit && pre-commit install   # once per checkout
 #   pre-commit run --all-files                     # every hook, on every file: the one command before a push
@@ -30,7 +30,7 @@ repos:
     rev: 6cde34d723717a639f9c7e16a7aca1ecbfdbf985  # v2.4.1
     hooks:
       - id: code-rules
-        # args: [--all, --project-ruff]  # with `project-ruff: true` on the lint job: the ruff the project pins
+        # args: [--paths, src, tools]  # the lint job's `paths`, `--no-format` without `format-check: true`
       # - id: code-rules-node  # a JavaScript or TypeScript project: what node-lint runs (after npm ci)
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: 745eface02aef23e168a8afb6b5737818efbea95  # v0.11.0.1 (shellcheck 0.11.0)

@@ -34,6 +34,21 @@ DEPENDABOT = (
     "version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n"
 )
 RESULT_PROBLEM = "has a job named `result`"
+# The other five checks standards-check runs by default since v3, turned off.
+OTHERS_OFF = {
+    "CHECK_PR_TEMPLATE": "false",
+    "CHECK_PRE_COMMIT_CONFIG": "false",
+    "CHECK_TICKET_TEMPLATE": "false",
+    "CHECK_AGENT_SETTINGS": "false",
+    "CHECK_RUFF_VERSION": "false",
+}
+OTHERS = (
+    "pr-template",
+    "pre-commit",
+    "ticket-template",
+    "agent-settings",
+    "one-ruff-version",
+)
 
 
 def claude(shared: str = SHARED, begin: str = BEGIN, end: str = END) -> str:
@@ -118,7 +133,7 @@ def test_a_project_made_from_the_templates_passes(tmp_path):
     assert check(project(tmp_path)) == []
 
 
-def test_the_check_is_off_by_default(tmp_path):
+def test_check_takes_the_template_check_by_keyword(tmp_path):
     root = project(tmp_path, {"CLAUDE.md": "x", ".github/workflows/ci.yml": None})
     assert standards.check(root) == []
     assert len(check(root)) == 2  # no markers, and no `result` job
@@ -198,10 +213,16 @@ def test_ci_needs_a_job_named_result_in_any_workflow(tmp_path):
 def test_main_wires_the_flag_when_run_as_a_script_from_another_directory(tmp_path):
     root = project(tmp_path, {"CLAUDE.md": claude(old())})
     tool = [sys.executable, str(ROOT / "tools" / "check_standards.py"), "--root", root]
-    res = subprocess.run(tool, cwd=tmp_path, capture_output=True, text=True)
+    tool += [f"--no-require-{name}" for name in OTHERS]
+    res = subprocess.run(
+        [*tool, "--no-require-current-templates"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
     assert res.returncode == 0 and res.stdout == "standards: OK\n"
     res = subprocess.run(
-        [*tool, "--require-current-templates"],
+        tool,  # on by default since v3
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -336,13 +357,13 @@ def test_the_workflow_passes_check_templates_to_the_tool(tmp_path):
     """The last step's script, as the workflow runs it, against the real tools."""
     text = (ROOT / ".github" / "workflows" / "standards-check.yml").read_text()
     declared = text.split("      check-templates:\n", 1)[1].splitlines()[:2]
-    assert [line.strip() for line in declared] == ["type: boolean", "default: false"]
+    assert [line.strip() for line in declared] == ["type: boolean", "default: true"]
     assert "CHECK_TEMPLATES: ${{ inputs.check-templates }}" in text
     assert text.endswith(
         'run: bash "$RUNNER_TEMP/standards/tools/steps/standards-check.sh"\n'
     )
     root = project(tmp_path, {"CLAUDE.md": claude(old())})
-    env = {"PATH": os.environ["PATH"]}
+    env = {"PATH": os.environ["PATH"], **OTHERS_OFF}
     results = {}
     for on in ("false", "true"):
         results[on] = subprocess.run(
@@ -359,7 +380,7 @@ def test_the_workflow_passes_check_templates_to_the_tool(tmp_path):
 
 def test_the_ci_template_names_the_input():
     text = (ROOT / "templates" / "ci.yml").read_text()
-    assert "# check-templates: true" in text
+    assert "# check-templates: false" in text  # on unless turned off
 
 
 def test_the_rehearsal_runs_the_template_check_an_adopter_turned_on(tmp_path):

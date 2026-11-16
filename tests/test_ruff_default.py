@@ -15,13 +15,14 @@ import pytest
 TOOLS = Path(__file__).resolve().parents[1] / "tools"
 needs_ruff = pytest.mark.skipif(shutil.which("ruff") is None, reason="no ruff")
 PIN = ["--config", 'lint.select=["E4", "E7", "E9", "F"]']
-# F401, E741 and W291 are the standard's; B006, C416 and SIM102 are not
+# F401, E741, B006 and SIM102 are the standard's; W291, C416 and B008 are not
 CODE = (
     "import os\n"
+    "import sys\n\n"
     "l = 1\n"
     "x = 1 \n"
     "z = [i for i in range(3)]\n\n\n"
-    "def f(a=[], b=None):\n"
+    "def f(a=[], b=None, c=os.getcwd()):\n"
     "    if a:\n"
     "        if b:\n"
     "            return a\n"
@@ -48,48 +49,66 @@ def flags(tmp_path: Path, ruff_toml: str | None) -> list[str]:
 
 
 def test_a_project_without_a_config_gets_ruffs_old_default(tmp_path):
-    assert flags(tmp_path, None) == [*config.STANDARD, *PIN]
+    assert flags(tmp_path, None) == [*config.STANDARD, *config.LEAVE_OUT, *PIN]
 
 
 def test_a_config_that_selects_its_rules_keeps_them(tmp_path):
-    assert flags(tmp_path, '[lint]\nselect = ["F", "B"]\n') is config.STANDARD
-    assert flags(tmp_path, "select = []\n") is config.STANDARD  # the old top level
+    want = [*config.STANDARD, *config.LEAVE_OUT]
+    assert flags(tmp_path, '[lint]\nselect = ["F", "B"]\n') == want
+    assert flags(tmp_path, "select = []\n") == want  # the old top level
+
+
+def test_a_config_that_names_b008_keeps_it(tmp_path):
+    """B008 is not the standard's, and a project may ask for it by name."""
+    assert flags(tmp_path, '[lint]\nselect = ["F", "B008"]\n') == config.STANDARD
+    assert flags(tmp_path, '[lint]\nextend-select = ["B008"]\n') == [
+        *config.STANDARD,
+        *PIN,
+        "--extend-select",
+        "B008",
+    ]
 
 
 def test_the_configs_extend_select_and_ignore_come_after_the_pin(tmp_path):
     toml = (
-        '[lint]\nextend-select = ["B", "C4"]\n'
-        'ignore = ["B006"]\nextend-ignore = ["C4"]\n'
+        '[lint]\nextend-select = ["C4", "PLR0912"]\n'
+        'ignore = ["B006", "C416"]\nextend-ignore = ["RET"]\n'
     )
     assert flags(tmp_path, toml) == [
         *config.STANDARD,
+        *config.LEAVE_OUT,
         *PIN,
         "--extend-select",
-        "B,C4",
+        "C4,PLR0912",
         "--ignore",
-        "B006,C4",
+        "C416,RET",  # B006 is the standard's: the config cannot ignore it
     ]
 
 
 def test_an_ignore_of_a_standard_rule_is_not_repeated(tmp_path):
-    toml = '[lint]\nignore = ["E741", "F", "PLR0912", "SIM102"]\n'
-    assert flags(tmp_path, toml)[-2:] == ["--ignore", "SIM102"]
+    toml = '[lint]\nignore = ["E741", "F", "SIM102", "UP", "I001", "E501", "PLR0912"]\n'
+    assert flags(tmp_path, toml)[-2:] == ["--ignore", "E501,PLR0912"]
 
 
 def test_every_config_ruff_reads_counts(tmp_path):
     (tmp_path / "sub").mkdir()
-    (tmp_path / "sub" / "ruff.toml").write_text('[lint]\nextend-select = ["SIM"]\n')
+    (tmp_path / "sub" / "ruff.toml").write_text('[lint]\nextend-select = ["S"]\n')
     (tmp_path / "sub" / "b.py").write_text("x = 1\n")
-    (tmp_path / "ruff.toml").write_text('[lint]\nextend-select = ["B"]\n')
+    (tmp_path / "ruff.toml").write_text('[lint]\nextend-select = ["C4"]\n')
     got = config.project_rules(tmp_path, {"sub/b.py"})
-    assert got[-2:] == ["--extend-select", "B,SIM"]
+    assert got[-2:] == ["--extend-select", "C4,S"]
     (tmp_path / "sub" / "ruff.toml").write_text('[lint]\nselect = ["F"]\n')
-    assert config.project_rules(tmp_path, {"sub/b.py"}) is config.STANDARD
+    got = config.project_rules(tmp_path, {"sub/b.py"})
+    assert got == [*config.STANDARD, *config.LEAVE_OUT]
 
 
 def test_before_python_3_11_the_old_default_is_pinned_alone(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "tomllib", None)
-    assert flags(tmp_path, '[lint]\nselect = ["B"]\n') == [*config.STANDARD, *PIN]
+    assert flags(tmp_path, '[lint]\nselect = ["B"]\n') == [
+        *config.STANDARD,
+        *config.LEAVE_OUT,
+        *PIN,
+    ]
 
 
 def codes(tmp_path: Path, rules: list[str]) -> list[str]:
@@ -113,20 +132,22 @@ def codes(tmp_path: Path, rules: list[str]) -> list[str]:
     return sorted(line.split()[1] for line in res.stdout.splitlines() if ": " in line)
 
 
+STANDARD_FOUND = ["B006", "E741", "F401", "SIM102"]
+
+
 @needs_ruff
 @pytest.mark.parametrize(
     ("ruff_toml", "expected"),
     [
-        (None, ["E741", "F401", "W291"]),
+        (None, STANDARD_FOUND),
+        ('[lint]\nextend-select = ["C4"]\n', sorted([*STANDARD_FOUND, "C416"])),
+        ('[lint]\nextend-select = ["B008"]\n', sorted([*STANDARD_FOUND, "B008"])),
         (
-            '[lint]\nextend-select = ["B", "C4"]\n',
-            ["B006", "C416", "E741", "F401", "W291"],
+            '[lint]\nextend-select = ["W"]\nignore = ["B006", "E741"]\n',
+            sorted([*STANDARD_FOUND, "W291"]),
         ),
-        (
-            '[lint]\nextend-select = ["B"]\nignore = ["B006", "E741"]\n',
-            ["E741", "F401", "W291"],
-        ),
-        ('[lint]\nselect = ["SIM"]\n', ["E741", "F401", "SIM102", "W291"]),
+        ('[lint]\nselect = ["W"]\n', sorted([*STANDARD_FOUND, "W291"])),
+        ('[lint]\nselect = ["B"]\n', STANDARD_FOUND),  # B, but not B008
     ],
 )
 def test_ruff_finds_what_the_project_and_the_standard_ask_for(
