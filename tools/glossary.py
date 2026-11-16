@@ -46,10 +46,12 @@ strict subset of YAML, with the standard library.
   informs, and fails only with ``--strict``. Capitalised words that are not
   bold are not looked at: every sentence starts with one.
 
-No terms file: one line says there is no glossary to check, and the run passes.
+No terms file: the log says there is no glossary to check, and where terms go,
+and the run passes. A failure says the same, after the command that fixes it.
 The ``glossary`` check of the ``checks`` action runs this file in its
-``working-directory``; the ``glossary`` pre-commit hook runs it in the root of the
-checkout.
+``working-directory``, as a check. The ``glossary`` pre-commit hook runs it in the
+root of the checkout with ``--write``, as a fixer: it writes the page, and pre-commit
+fails the run because a file changed.
 
 Standard library only.
 """
@@ -71,19 +73,21 @@ PAGE = "GLOSSARY.md"
 FIELDS = ("term", "definition", "synonyms", "see")
 OK, FAILED, UNREADABLE = 0, 1, 2
 HEADER = (
-    "<!-- Made from terms.yaml beside this file by tools/glossary.py of "
+    "<!-- Made from terms.yaml beside this file by the glossary hook of "
     "murphy360/standards. Do not edit it:\n"
-    "     change terms.yaml, then run `python3 <standards>/tools/glossary.py "
-    "--write`. -->"
+    "     change terms.yaml, then run `pre-commit run glossary --all-files`. -->"
 )
 INTRO = (
     "The terms this project uses, A to Z. Each is defined once, in `terms.yaml` "
     "beside this page."
 )
 FIX = (
-    "Fix: run `python3 <standards>/tools/glossary.py --write{args}` and commit the "
-    "page (<standards> is murphy360/standards, checked out at the version this "
-    "project's CI calls)"
+    "Fix: run `pre-commit run glossary --all-files` and commit the page: the "
+    "`glossary` hook of murphy360/standards writes it{args}"
+)
+WHERE_TERMS_GO = (
+    "Each new term goes in {terms} in the pull request that brings it in "
+    '(murphy360/standards, "The glossary")'
 )
 DIFF_LINES = 40
 MAX_WORDS = 4
@@ -455,7 +459,8 @@ def main(argv=None) -> int:
     page = terms.with_name(PAGE)
     name = terms.as_posix()
     if not terms.is_file():
-        print(f"glossary: no {name} here, so there is no glossary to check")
+        print(f"glossary: no {name} here, so there is no glossary to check.")
+        print(WHERE_TERMS_GO.format(terms=TERMS))
         return OK
     try:
         data = load(terms.read_text(encoding="utf-8"))
@@ -473,7 +478,9 @@ def main(argv=None) -> int:
         print(f"glossary: FAILED, {len(problems)} problem(s) in {name}")
         return FAILED
     text = render(entries, owner)
-    fix = FIX.format(args="" if args.terms == TERMS else f" --terms {name}")
+    hint = f" (give it `args: [--write, --terms, {name}]`)"
+    fix = FIX.format(args="" if args.terms == TERMS else hint)
+    fix += ". " + WHERE_TERMS_GO.format(terms=name)
     if args.write:
         code = write(page, text, len(entries))
     else:

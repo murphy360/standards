@@ -32,7 +32,7 @@ on the ticket, in one comment, that you started and which branch.
 1. The change, small and readable, in the files the ticket names.
 2. A unit test for every new behaviour, green in Docker. CI's run is the record: the PR body pastes no output.
 3. The documentation in the same PR: the spec for the area, the user-facing manual, and a training or how-to line
-   where the project has them. Write for the reader, not the developer. Define new terms in `docs/terms.yaml`.
+   where the project has them. Write for the reader, not the developer.
 4. The commit: the first line says what changed in plain words; the body says why; `Closes #N`; a `Note:` line for
    anything the deployer must do.
 5. Open the pull request as a **draft** with `gh pr create --draft --base main` (a draft still runs CI), and comment

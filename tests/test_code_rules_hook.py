@@ -30,10 +30,7 @@ REQUIRED_KEYS = {"id", "name", "entry", "language"}
 KNOWN_KEYS = REQUIRED_KEYS | {"description", "args", "pass_filenames"}
 # the one tool a document may tell a reader to run from a checkout of this repository:
 # it copies the templates out of that checkout (README, "Staying current")
-NEEDS_A_CHECKOUT = {
-    "sync_templates.py",
-    "glossary.py",
-}  # each writes files of the project
+NEEDS_A_CHECKOUT = {"sync_templates.py"}
 STANDARDS_HOOK_RE = re.compile(
     r"^  - repo: https://github\.com/murphy360/standards\n"
     r"    rev: ([0-9a-f]{40})  # (\S.*)\n"
@@ -81,6 +78,7 @@ def test_the_manifest_offers_the_four_hooks_and_each_is_valid():
 def test_each_hook_runs_what_its_workflow_runs():
     assert "args" not in hook("code-rules")  # every file, every check: the default
     assert hook("code-rules-node")["args"] == "[--eslint, --no-format]"
+    assert hook("glossary")["args"] == "[--write]"  # a fixer; the check does not write
     # one script holds the step of both lint workflows
     step = (ROOT / "tools" / "steps" / "code-rules.sh").read_text()
     assert "args=(--eslint --no-format)" in step

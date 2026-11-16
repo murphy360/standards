@@ -27,7 +27,7 @@ rules.
 | `tools/glossary.py` | the `glossary` check: `docs/GLOSSARY.md` is what `docs/terms.yaml` gives, and no name is defined twice; `--write` makes the page; `--undefined` lists the bold terms of the docs that no term defines (a report; `--strict` fails on them); no terms file, nothing to check ("The glossary", below) |
 | `tools/yaml_subset.py` | the strict subset of YAML that `glossary.py` reads `docs/terms.yaml` with, in the standard library: block mappings and sequences, plain, quoted and block scalars, one-line `[lists]` and comments; anything else is an error that names its line |
 | `tools/type_check.py` | the type check `type-check` runs: pyright, or the project's `tsc --noEmit` with `--language typescript`; it reads the checker's output and prints each finding the way `code_rules.py` does |
-| `.pre-commit-hooks.yaml` | the code rules as pre-commit hooks: `code-rules` is what `python-lint` runs and `code-rules-node` is what `node-lint` runs; `layering` and `glossary` are what the checks of those names run. pre-commit installs this repository (`pyproject.toml`: the modules under `tools/` and the pinned ruff) into the hook's own environment, so a project installs nothing |
+| `.pre-commit-hooks.yaml` | the code rules as pre-commit hooks: `code-rules` is what `python-lint` runs and `code-rules-node` is what `node-lint` runs; `layering` is what the `layering` check runs, and `glossary` writes the page the `glossary` check checks. pre-commit installs this repository (`pyproject.toml`: the modules under `tools/` and the pinned ruff) into the hook's own environment, so a project installs nothing |
 | `tools/check_standards.py` | the checks `standards-check` runs; six of them have a flag that turns one off (`--no-require-pr-template`, `--no-require-pre-commit`, `--no-require-ticket-template`, `--no-require-current-templates`, `--no-require-agent-settings`, `--no-require-one-ruff-version`) |
 | `tools/ruff_version.py` | which ruff a project is linted with: the `ruff-version` input, the project's own pin, or the standard's default, which is written once, in `pyproject.toml` (also with `project-ruff: false`). The lint workflows install ruff with it and `code_rules.py` imports it, so CI and the hook choose the same way |
 | `tools/images/`, `tools/image-ref.sh` | the images the workflows run (shellcheck, actionlint, gitleaks, alpine), each by tag and digest in a Dockerfile of its own, where Dependabot updates them; the script reads one for a workflow |
@@ -213,8 +213,9 @@ unused imports, which the lint fails on already (F401).
 ## The glossary
 
 Every project defines its terms once, in `docs/terms.yaml`, and the docs carry a page made from it,
-`docs/GLOSSARY.md`. The `glossary` check of `actions/checks` is on by default and runs in `working-directory`. A
-project without `docs/terms.yaml` passes, and the log says there is no glossary to check.
+`docs/GLOSSARY.md`. Each new term goes in `docs/terms.yaml` in the pull request that brings it in. The `glossary`
+check of `actions/checks` is on by default and runs in `working-directory`. A project without `docs/terms.yaml`
+passes, and the log says there is no glossary to check and where terms go.
 
 ```yaml
 # The terms of this project. docs/GLOSSARY.md is made from this file (murphy360/standards, "The glossary").
@@ -236,13 +237,12 @@ project without `docs/terms.yaml` passes, and the log says there is no glossary 
   allowed.
 - **Each name is defined once.** A term or a synonym that another entry defines too fails, compared without case,
   and so does a synonym that is its own term and a `see` that names no term or names a synonym.
-- **The page.** `python3 <standards>/tools/glossary.py --write` makes `docs/GLOSSARY.md`: the terms A to Z, each
-  under its own heading, so each has an anchor to link to; its other names; links to the terms it sees; then every
-  other name, A to Z, linked to its term. A comment at the top says the page is made and how to make it again.
-  `<standards>` is a checkout at the version the project's CI calls, as for the sync tool.
-- **The check.** Without `--write` the tool fails when the page is missing or is not what the terms give, and prints
-  the difference and the command that fixes it. Trailing whitespace and line endings do not count. A file it cannot
-  read fails too, with its line.
+- **The page.** The `glossary` hook writes `docs/GLOSSARY.md` (`tools/glossary.py --write`): the terms A to Z,
+  each under its own heading, so each has an anchor to link to; its other names; links to the terms it sees; then
+  every other name, A to Z, linked to its term. A comment at the top says the page is made and how to make it again.
+- **The check.** CI only checks: the `glossary` check runs the tool without `--write`. It fails when the page is
+  missing or is not what the terms give, and prints the difference, the command that fixes it, and where new terms
+  go. Trailing whitespace and line endings do not count. A file it cannot read fails too, with its line.
 - **The file is a subset of YAML.** The standard's tools use the standard library only, and the checks action
   installs no Python package, so `tools/yaml_subset.py` reads the file: block mappings and sequences, plain values
   (also over more lines), quoted values on one line, `>` and `|` blocks, `[a, b]` lists on one line, and comments.
@@ -253,14 +253,18 @@ project without `docs/terms.yaml` passes, and the log says there is no glossary 
   synonym names, with the first place each is used. Headings, code blocks, code spans and the page are skipped. Bold
   text counts as a term when it is one to four words, holds a capital or a digit, and does not end in punctuation:
   `**Note:**` and `**Every check runs.**` are lead-ins, and `**never**` is emphasis. A leading article goes, and a
-  plural matches its term. It is a report: only `--strict` fails on it, and the check does not run it.
+  plural matches its term. It is a report: only `--strict` fails on it, and the check does not run it. A project
+  that wants it before a push gives the hook `args: [--write, --undefined]`.
   Capitalised words that are not bold are not looked at: every sentence starts with one, so the list would be mostly
   noise.
-- **Before a push.** The `glossary` hook of `.pre-commit-hooks.yaml` runs the check in the root of the checkout. A
-  project whose docs are in a subdirectory gives it `args: [--terms, api/docs/terms.yaml]`. With `args: [--write]`
-  the hook rewrites the page: pre-commit fails that run once, as a file changed, and the next run passes.
-- **Agents.** The shared text of `AGENTS.md` tells an agent to define new terms in `docs/terms.yaml`, as part of
-  the documentation of the pull request that brings them in. The check prints the command that makes the page again.
+- **Before a push.** The `glossary` hook of `.pre-commit-hooks.yaml` is a fixer, like `ruff-format`: in the root
+  of the checkout it writes the page from the terms, and pre-commit fails that run because a file changed. Commit
+  the page, and the next run passes. `pre-commit run --all-files`, the one command, runs it with the rest. A project
+  whose docs are in a subdirectory gives it `args: [--write, --terms, api/docs/terms.yaml]`, and `args: []` makes
+  it only check.
+- **Agents.** The shared text of `AGENTS.md` does not mention the glossary yet: a change to it makes every adopter's
+  template check fail until it syncs, so the line waits for the next batch of template changes. Until then the
+  check's log and this section say where new terms go.
 
 ## The rules
 

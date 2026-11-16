@@ -1,5 +1,5 @@
-<!-- Made from terms.yaml beside this file by tools/glossary.py of murphy360/standards. Do not edit it:
-     change terms.yaml, then run `python3 <standards>/tools/glossary.py --write`. -->
+<!-- Made from terms.yaml beside this file by the glossary hook of murphy360/standards. Do not edit it:
+     change terms.yaml, then run `pre-commit run glossary --all-files`. -->
 
 # Glossary
 

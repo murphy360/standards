@@ -31,8 +31,8 @@ TERMS = """\
   see: [Waypoint]
 """
 PAGE = """\
-<!-- Made from terms.yaml beside this file by tools/glossary.py of murphy360/standards. Do not edit it:
-     change terms.yaml, then run `python3 <standards>/tools/glossary.py --write`. -->
+<!-- Made from terms.yaml beside this file by the glossary hook of murphy360/standards. Do not edit it:
+     change terms.yaml, then run `pre-commit run glossary --all-files`. -->
 
 # Glossary
 
@@ -88,7 +88,9 @@ def test_no_terms_file_passes_and_says_so(tmp_path, monkeypatch, capsys):
     code, out = run(project(tmp_path, {"README.md": "# x\n"}), monkeypatch, capsys)
     assert code == 0
     assert out == [
-        "glossary: no docs/terms.yaml here, so there is no glossary to check"
+        "glossary: no docs/terms.yaml here, so there is no glossary to check.",
+        "Each new term goes in docs/terms.yaml in the pull request that brings it in "
+        '(murphy360/standards, "The glossary")',
     ]
 
 
@@ -113,7 +115,13 @@ def test_a_missing_page_fails_with_the_fix(tmp_path, monkeypatch, capsys):
     assert out[-1].startswith(
         "glossary: FAILED, docs/GLOSSARY.md is not what the terms"
     )
-    assert "`python3 <standards>/tools/glossary.py --write`" in out[-1]
+    assert (
+        "Fix: run `pre-commit run glossary --all-files` and commit the page" in out[-1]
+    )
+    assert out[-1].endswith(
+        "Each new term goes in docs/terms.yaml in the pull request that brings it in "
+        '(murphy360/standards, "The glossary")'
+    )
 
 
 def test_a_stale_page_fails_and_shows_the_difference(tmp_path, monkeypatch, capsys):
@@ -138,7 +146,8 @@ def test_another_terms_file_names_itself_in_the_fix(tmp_path, monkeypatch, capsy
     root = project(tmp_path, {"api/docs/terms.yaml": TERMS})
     code, out = run(root, monkeypatch, capsys, "--terms", "api/docs/terms.yaml")
     assert code == 1
-    assert "--write --terms api/docs/terms.yaml`" in out[-1]
+    assert "(give it `args: [--write, --terms, api/docs/terms.yaml]`)" in out[-1]
+    assert "goes in api/docs/terms.yaml in the pull request" in out[-1]
     run(root, monkeypatch, capsys, "--terms", "api/docs/terms.yaml", "--write")
     assert (root / "api" / "docs" / "GLOSSARY.md").read_text() == PAGE
 
@@ -346,12 +355,3 @@ def test_the_readme_example_is_a_valid_terms_file():
 def test_the_fixtures_page_is_current(monkeypatch, capsys):
     monkeypatch.chdir(ROOT / "tests" / "fixtures" / "python-project")
     assert glossary.main([]) == 0, capsys.readouterr().out
-
-
-def test_the_shared_text_tells_agents_to_define_new_terms():
-    shared = (ROOT / "templates" / "AGENTS.md").read_text()
-    lines = [x for x in shared.splitlines() if "docs/terms.yaml" in x]
-    assert lines == [
-        "   where the project has them. Write for the reader, not the developer. "
-        "Define new terms in `docs/terms.yaml`."
-    ]  # in the documentation of the pull request; the check prints the command

@@ -31,13 +31,14 @@
   entry: layering
   language: python
   pass_filenames: false
-# The glossary: what the `glossary` check of the checks action runs. docs/GLOSSARY.md must be what docs/terms.yaml
-# gives; a project without a terms file passes. A project whose docs are in a subdirectory passes
-# `--terms <dir>/docs/terms.yaml` in `args`. `args: [--write]` makes the hook rewrite the page instead: pre-commit
-# then fails the run once, because a file changed, and the next run passes.
+# The glossary, as a fixer, like ruff-format: it writes docs/GLOSSARY.md from docs/terms.yaml, and pre-commit fails
+# the run because a file changed; the next run passes. The `glossary` check of the checks action runs the same tool
+# without --write, so CI only checks. A project without a terms file passes. A project whose docs are in a
+# subdirectory sets `args: [--write, --terms, <dir>/docs/terms.yaml]`; `args: []` makes the hook only check.
 - id: glossary
-  name: glossary (docs/terms.yaml makes docs/GLOSSARY.md)
-  description: What the glossary check runs. The page is what the terms give, and no name is defined twice.
+  name: glossary (docs/terms.yaml writes docs/GLOSSARY.md)
+  description: Writes the page from the terms. A name defined twice, or a file it cannot read, fails it.
   entry: glossary
+  args: [--write]
   language: python
   pass_filenames: false
