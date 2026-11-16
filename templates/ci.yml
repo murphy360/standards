@@ -14,9 +14,12 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  # The quick checks in one job: standards-check, the lint, shellcheck, actionlint and the secret scan. One runner
-  # and one checkout, so a private project is billed for one job where five reusable workflows are five. Every check
-  # runs, also after one failed, and the last lines of the step say which failed.
+  # The quick checks in one job: standards-check, the lint, shellcheck, actionlint, the secret scan, the layering
+  # contracts and the reuse report. One runner and one checkout, so a private project is billed for one job where
+  # five reusable workflows are five. Every check runs, also after one failed, and the last lines of the step say
+  # which failed. `layering` checks the contracts of a .importlinter, and passes without one: a project with more
+  # than one package writes it (the standards README, "Layering contracts and the reuse report"). `reuse` never
+  # fails: on a pull request the job summary says what the change wrote twice.
   # The job is the project's own, so it names its runner and its time limit: `runs-on: [self-hosted, linux]` for a
   # self-hosted runner, as in any job. The runner needs Docker.
   checks:
@@ -33,10 +36,12 @@ jobs:
         with:
           format-check: true
           # checks: standards-check node-lint shell-lint actionlint secret-scan  # a JavaScript or TypeScript
-          #                # project: node-lint in place of python-lint. The default is the five with python-lint
-          # paths: src tools  # the lint: only these directories (default: every tracked file). A project with debt
-          #                   # lists the ones that are clean, says why beside it, and widens it as it pays down
-          # working-directory: frontend   # the lint: the directory it runs in
+          #                # project: node-lint in place of python-lint, and no layering or reuse. The default is
+          #                # these five with python-lint, then layering and reuse
+          # paths: src tools  # the lint and reuse: only these directories (default: every tracked file). A
+          #                   # project with debt lists the ones that are clean, says why beside it, and widens
+          #                   # it as it pays down
+          # working-directory: frontend   # the lint, layering and reuse: the directory they run in
           # Every check runs in full by default. `false` turns one part off; write the reason beside it:
           # silencers: false         # no check that a skip, an xfail, a type ignore and the like carry a reason
           # project-ruff: false      # the standard's default ruff, not the one the project pins

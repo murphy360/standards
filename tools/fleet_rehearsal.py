@@ -21,7 +21,9 @@ fleet.py finds the adopters; this module does the rest. For each adopter it:
    (``mode``, ``format-only``) is not read. Install the standard's default ruff
    first (``ruff_version.py --install``). A step that uses the ``checks`` action
    counts as a caller of each check it names, with the step's inputs
-   (``fleet.py``);
+   (``fleet.py``). A caller of ``layering`` gets ``layering.py`` in its
+   ``working-directory``, when the ref has it. ``reuse`` never fails, so it is
+   not rehearsed;
 4. prints pass or FAIL, and the last line of each tool;
 5. deletes the clone. The temporary directory goes when the run ends, however
    it ends.
@@ -129,6 +131,13 @@ def plan(row: dict, major: int = 2) -> list[dict]:
                 "cwd": ".",
                 "changed": False,
             }
+        elif call["workflow"] == "layering":
+            step = {
+                "tool": "layering.py",
+                "args": [],
+                "cwd": plain(given.get("working-directory")) or ".",
+                "changed": False,
+            }
         else:
             continue
         same = [s for s in steps if step_key(s) == step_key(step)]
@@ -210,6 +219,8 @@ def rehearse_one(row: dict, slug: str, tools: Path, dest: Path, clone, run) -> d
         if error:
             out["runs"].append({"tool": "clone", "result": "error", "last": error})
         for step in () if error else steps:
+            if not (tools / step["tool"]).is_file():
+                continue  # a tool the ref does not have yet
             argv = [sys.executable, str(tools / step["tool"]), *step["args"]]
             code, output = run(argv, dest / step["cwd"])
             failed = "debt" if step["changed"] else "FAIL"
