@@ -17,12 +17,14 @@ A check is named after the reusable workflow that runs the same step:
   without one it passes;
 * ``reuse``: ``reuse_report.py``, which informs and never fails. On a pull request
   it compares with the base (``PR_BASE``) and writes what the change added to the
-  job summary.
+  job summary;
+* ``glossary``: ``glossary.py``, which fails when ``docs/GLOSSARY.md`` is not what
+  ``docs/terms.yaml`` gives; without a terms file it passes.
 
-``layering`` and ``reuse`` have no reusable workflow and no step script: they are
-the action's alone, so this file runs each tool itself.
+``layering``, ``reuse`` and ``glossary`` have no reusable workflow and no step
+script: they are the action's alone, so this file runs each tool itself.
 
-The two lints, ``layering`` and ``reuse`` run in ``WORKING_DIRECTORY``, the others in
+The two lints, ``layering``, ``reuse`` and ``glossary`` run in ``WORKING_DIRECTORY``, the others in
 the root of the checkout, which is the directory this file is run in. ``reuse``
 reads ``PATHS`` as the lints do; ``layering`` does not, as its contracts name what
 they cover. Every other input is a variable the step script reads itself (each
@@ -63,11 +65,12 @@ PARTS = (
     "secret-scan",
     "layering",
     "reuse",
+    "glossary",
 )
 LINTS = ("python-lint", "node-lint")
 # The default of the action's `checks` input. fleet.py reads it for a caller that
 # passes none, and a test keeps actions/checks/action.yml the same.
-DEFAULT = "standards-check python-lint shell-lint actionlint secret-scan layering reuse"
+DEFAULT = "standards-check python-lint shell-lint actionlint secret-scan layering reuse glossary"
 NOT_A_CHECK = 2
 DID_NOT_START = 127
 
@@ -112,6 +115,7 @@ def commands(part: str, env: dict[str, str]) -> list[Command]:
         "secret-scan": [(step("secret-scan.sh"), ".")],
         "layering": [([sys.executable, str(TOOLS / "layering.py")], lint_dir)],
         "reuse": [(reuse_command(env), lint_dir)],
+        "glossary": [([sys.executable, str(TOOLS / "glossary.py")], lint_dir)],
     }
     return table[part]
 

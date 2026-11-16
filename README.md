@@ -8,7 +8,7 @@ rules.
 
 | Path | What it is |
 |---|---|
-| `actions/checks` | the quick checks as one step of a project's own job: `standards-check`, the lint (`python-lint` or `node-lint`), `shell-lint`, `actionlint` and `secret-scan`, each the check the reusable workflow of that name runs, with the same inputs, and `layering` and `reuse`, which are the action's alone; `checks` names which run; every one runs, also after one failed, and the step fails at the end ("One job runs the quick checks", below) |
+| `actions/checks` | the quick checks as one step of a project's own job: `standards-check`, the lint (`python-lint` or `node-lint`), `shell-lint`, `actionlint` and `secret-scan`, each the check the reusable workflow of that name runs, with the same inputs, and `layering`, `reuse` and `glossary`, which are the action's alone; `checks` names which run; every one runs, also after one failed, and the step fails at the end ("One job runs the quick checks", below) |
 | `actions/take-ownership` | the first step of a project's own job, before the checkout: on a self-hosted runner it takes back the files a previous job's containers left in the workspace; on a GitHub-hosted runner it does nothing |
 | `.github/workflows/standards-check.yml` | Fails a project that lacks a `.github/dependabot.yml` covering its ecosystems, pins an action to anything but a commit SHA, or has no instruction file (`AGENTS.md`, or a `CLAUDE.md` alone); six more checks run by default, each with a `check-*` input that turns it off: the pull request template, the pre-commit config, the ticket template, the agent settings, one ruff version, and `check-templates`, which fails a project whose copy of the shared text of `AGENTS.md` fell behind the template, whose `CLAUDE.md` does not import the `AGENTS.md` beside it, or whose CI has no job named `result` |
 | `.github/workflows/python-lint.yml` | ruff with the project's config plus the standard's rules, no `# noqa`, every silencer with its reason, and the file-size limit (`tools/code_rules.py`), on every file; `format-check: true` adds `ruff format --check`; `paths` limits it to some directories; it lints with the ruff the project pins (`project-ruff: false` takes the standard's default) |
@@ -24,8 +24,10 @@ rules.
 | `tools/steps/` | the shell of each check step, one script each (`standards-check.sh`, `code-rules.sh`, `shell-lint.sh`, `actionlint.sh`, `secret-scan.sh`, `take-ownership.sh`): the reusable workflow and the action run the same file, and the tests run that file |
 | `tools/layering.py` | the `layering` check: the project's layering contracts, in import-linter's `.importlinter` shape, checked with Python's own `ast`; a broken contract fails, every allowed import names its ticket, and one that no longer happens fails; no `.importlinter`, nothing to check ("Layering contracts and the reuse report", below) |
 | `tools/reuse_report.py` | the `reuse` check: names defined in more than one file and blocks of eight lines or more written twice; on a pull request the job summary says what the change added; it never fails |
+| `tools/glossary.py` | the `glossary` check: `docs/GLOSSARY.md` is what `docs/terms.yaml` gives, and no name is defined twice; `--write` makes the page; `--undefined` lists the bold terms of the docs that no term defines (a report; `--strict` fails on them); no terms file, nothing to check ("The glossary", below) |
+| `tools/yaml_subset.py` | the strict subset of YAML that `glossary.py` reads `docs/terms.yaml` with, in the standard library: block mappings and sequences, plain, quoted and block scalars, one-line `[lists]` and comments; anything else is an error that names its line |
 | `tools/type_check.py` | the type check `type-check` runs: pyright, or the project's `tsc --noEmit` with `--language typescript`; it reads the checker's output and prints each finding the way `code_rules.py` does |
-| `.pre-commit-hooks.yaml` | the code rules as pre-commit hooks: `code-rules` is what `python-lint` runs and `code-rules-node` is what `node-lint` runs; `layering` is what the `layering` check runs. pre-commit installs this repository (`pyproject.toml`: the modules under `tools/` and the pinned ruff) into the hook's own environment, so a project installs nothing |
+| `.pre-commit-hooks.yaml` | the code rules as pre-commit hooks: `code-rules` is what `python-lint` runs and `code-rules-node` is what `node-lint` runs; `layering` is what the `layering` check runs, and `glossary` writes the page the `glossary` check checks. pre-commit installs this repository (`pyproject.toml`: the modules under `tools/` and the pinned ruff) into the hook's own environment, so a project installs nothing |
 | `tools/check_standards.py` | the checks `standards-check` runs; six of them have a flag that turns one off (`--no-require-pr-template`, `--no-require-pre-commit`, `--no-require-ticket-template`, `--no-require-current-templates`, `--no-require-agent-settings`, `--no-require-one-ruff-version`) |
 | `tools/ruff_version.py` | which ruff a project is linted with: the `ruff-version` input, the project's own pin, or the standard's default, which is written once, in `pyproject.toml` (also with `project-ruff: false`). The lint workflows install ruff with it and `code_rules.py` imports it, so CI and the hook choose the same way |
 | `tools/images/`, `tools/image-ref.sh` | the images the workflows run (shellcheck, actionlint, gitleaks, alpine), each by tag and digest in a Dockerfile of its own, where Dependabot updates them; the script reads one for a workflow |
@@ -90,24 +92,25 @@ its steps are the standard's actions:
 ```
 
 - **What runs.** `checks` names the checks, separated by spaces, each by the name of the reusable workflow that runs
-  the same check. The default is `standards-check python-lint shell-lint actionlint secret-scan layering reuse`.
-  `layering` and `reuse` have no reusable workflow ("Layering contracts and the reuse report", below). A JavaScript
-  or TypeScript project writes `node-lint` in place of `python-lint`, and leaves out `layering` and `reuse` unless
-  it has Python code; `node-lint` lints the project's Python files too. A second lint, in another directory, is a
-  second `checks` step with `checks: node-lint`, its own `working-directory`, and `if: ${{ !cancelled() }}` so that
-  it runs after a failure.
+  the same check. The default is
+  `standards-check python-lint shell-lint actionlint secret-scan layering reuse glossary`. `layering`, `reuse` and
+  `glossary` have no reusable workflow ("Layering contracts and the reuse report" and "The glossary", below). A
+  JavaScript or TypeScript project writes `node-lint` in place of `python-lint`, and leaves out `layering` and
+  `reuse` unless it has Python code; `node-lint` lints the project's Python files too. A second lint, in another
+  directory, is a second `checks` step with `checks: node-lint`, its own `working-directory`, and
+  `if: ${{ !cancelled() }}` so that it runs after a failure.
 - **Every check runs.** A check that fails does not stop the next one, and the step fails at the end, so one run
   reports every tool's findings. Each check's output is a group of the step's log. The last lines say which passed
-  and which failed (`checks: FAILED, 2 of 7: python-lint, actionlint`), each failed check is an error annotation
+  and which failed (`checks: FAILED, 2 of 8: python-lint, actionlint`), each failed check is an error annotation
   that names its group, and the job summary holds the same table. The step's exit code is the highest of the
   checks'. A name that is no check fails the step too, and the others still run.
 - **The inputs are the workflows'.** Same names and same defaults: `paths`, `format-check`, `working-directory`,
   `no-inline-config`, `silencers`, `project-ruff`, `ruff-version`, `python-version`, `node-version`, the six
   `check-*` inputs of standards-check, `shellcheck-version`, `actionlint-version` and `full-history`. Every check runs
   in full by default: an input set to `false` turns one part off, with the reason beside it. Where this page says an input goes on `python-lint`, on `node-lint` or in `standards-check`'s
-  `with:`, the `checks` step takes it the same way. `working-directory` is the lint's, and `layering` and `reuse`
-  run there too: the other checks run in the root of the checkout. `reuse` reads `paths` as the lint does. There is
-  no `runs-on` and no `standards-ref`.
+  `with:`, the `checks` step takes it the same way. `working-directory` is the lint's, and `layering`, `reuse` and
+  `glossary` run there too: the other checks run in the root of the checkout. `reuse` reads `paths` as the lint
+  does. There is no `runs-on` and no `standards-ref`.
 - **The tools are the pinned ref's.** An action finds its own files (`github.action_path`), so the step runs the
   tools of the ref it names: nothing is fetched a second time, and nothing is added to the workspace.
 - **The checkout is the project's.** It fetches the whole history (`fetch-depth: 0`), because the secret scan
@@ -206,6 +209,62 @@ copies. On a push the summary gives the counts.
 
 There is no unused-code list. vulture is not in the standard library, and what it finds at 80 % confidence is mostly
 unused imports, which the lint fails on already (F401).
+
+## The glossary
+
+Every project defines its terms once, in `docs/terms.yaml`, and the docs carry a page made from it,
+`docs/GLOSSARY.md`. Each new term goes in `docs/terms.yaml` in the pull request that brings it in. The `glossary`
+check of `actions/checks` is on by default and runs in `working-directory`. A project without `docs/terms.yaml`
+passes, and the log says there is no glossary to check and where terms go.
+
+```yaml
+# The terms of this project. docs/GLOSSARY.md is made from this file (murphy360/standards, "The glossary").
+- term: Waypoint
+  definition: A point the vehicle steers to.
+  synonyms: [WP, mark]             # other names for it
+  see: [Route]                     # related terms
+- term: Route
+  definition: >
+    The waypoints of one mission, in the order the vehicle visits them.
+    A long definition folds onto more lines like this one.
+  synonyms:                        # or other names by audience or domain
+    operators: [track]
+    navy: [lane]
+```
+
+- **A term** has `term` and `definition`, both required. `definition` is Markdown. `synonyms` is a list of names, or
+  a mapping of an audience or a domain to a list of names. `see` lists other terms of the file. No other key is
+  allowed.
+- **Each name is defined once.** A term or a synonym that another entry defines too fails, compared without case,
+  and so does a synonym that is its own term and a `see` that names no term or names a synonym.
+- **The page.** The `glossary` hook writes `docs/GLOSSARY.md` (`tools/glossary.py --write`): the terms A to Z,
+  each under its own heading, so each has an anchor to link to; its other names; links to the terms it sees; then
+  every other name, A to Z, linked to its term. A comment at the top says the page is made and how to make it again.
+- **The check.** CI only checks: the `glossary` check runs the tool without `--write`. It fails when the page is
+  missing or is not what the terms give, and prints the difference, the command that fixes it, and where new terms
+  go. Trailing whitespace and line endings do not count. A file it cannot read fails too, with its line.
+- **The file is a subset of YAML.** The standard's tools use the standard library only, and the checks action
+  installs no Python package, so `tools/yaml_subset.py` reads the file: block mappings and sequences, plain values
+  (also over more lines), quoted values on one line, `>` and `|` blocks, `[a, b]` lists on one line, and comments.
+  Every value is text. Anchors, aliases, tags, `{mappings}`, a key given twice and a plain value holding `: ` are
+  errors that name the line. What it reads, YAML reads the same way, so pre-commit's `check-yaml` passes the file
+  too.
+- **Undefined terms.** `--undefined` also lists bold text (`**Term**`) in the tracked Markdown files that no term or
+  synonym names, with the first place each is used. Headings, code blocks, code spans and the page are skipped. Bold
+  text counts as a term when it is one to four words, holds a capital or a digit, and does not end in punctuation:
+  `**Note:**` and `**Every check runs.**` are lead-ins, and `**never**` is emphasis. A leading article goes, and a
+  plural matches its term. It is a report: only `--strict` fails on it, and the check does not run it. A project
+  that wants it before a push gives the hook `args: [--write, --undefined]`.
+  Capitalised words that are not bold are not looked at: every sentence starts with one, so the list would be mostly
+  noise.
+- **Before a push.** The `glossary` hook of `.pre-commit-hooks.yaml` is a fixer, like `ruff-format`: in the root
+  of the checkout it writes the page from the terms, and pre-commit fails that run because a file changed. Commit
+  the page, and the next run passes. `pre-commit run --all-files`, the one command, runs it with the rest. A project
+  whose docs are in a subdirectory gives it `args: [--write, --terms, api/docs/terms.yaml]`, and `args: []` makes
+  it only check.
+- **Agents.** The shared text of `AGENTS.md` does not mention the glossary yet: a change to it makes every adopter's
+  template check fail until it syncs, so the line waits for the next batch of template changes. Until then the
+  check's log and this section say where new terms go.
 
 ## The rules
 
@@ -648,14 +707,14 @@ fine.
 clones each adopter into a temporary directory, and runs the tools the way the adopter's workflows would, with the
 defaults of the ref's major: `code_rules.py` for a caller of `python-lint`, with its `format-check`, `paths`,
 `working-directory`, `silencers`, `project-ruff` and `ruff-version`, `check_standards.py` for a caller of
-`standards-check`, with its `check-*` inputs, and `layering.py` for a caller of `layering`, in its
-`working-directory`. At a v3 ref every check is on unless the caller set it `false`, so the
-rehearsal shows what an adopter meets once it has moved. A `checks` step counts as a caller of each check it names,
-with the step's inputs. It prints pass or FAIL for each repository with the last line of each tool, deletes the
-clones, and exits 1 when a repository fails. `debt` is a failure of `code_rules.py` in a repository that lints in
-`mode: changed` (v2): its pull requests check only the files they touch, and at v3 it narrows `paths` instead. Run it
-at the current tag first to see what fails already. `node-lint` is not rehearsed, and neither is `reuse`, which
-never fails.
+`standards-check`, with its `check-*` inputs, and `layering.py` for a caller of `layering` and `glossary.py` for a
+caller of `glossary`, each in its `working-directory`. At a v3 ref every check is on unless the caller set it
+`false`, so the rehearsal shows what an adopter meets once it has moved. A `checks` step counts as a caller of each
+check it names, with the step's inputs. It prints pass or FAIL for each repository with the last line of each tool,
+deletes the clones, and exits 1 when a repository fails. `debt` is a failure of `code_rules.py` in a repository that
+lints in `mode: changed` (v2): its pull requests check only the files they touch, and at v3 it narrows `paths`
+instead. Run it at the current tag first to see what fails already. `node-lint` is not rehearsed, and neither is
+`reuse`, which never fails.
 
 `code_rules.py` needs ruff. Where ruff is not installed the rehearsal stops and prints this command, which runs it
 in Docker from the root of this repository:

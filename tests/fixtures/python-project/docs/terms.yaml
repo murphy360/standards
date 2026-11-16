@@ -1,0 +1,13 @@
+# The fixture's glossary: ci.yml's `checks` job runs the `glossary` check here (working-directory), so the check
+# reads a terms file on every pull request. docs/GLOSSARY.md is made from it: `python3 ../../../tools/glossary.py --write` here.
+- term: Release
+  definition: A version of a package, named by its version number, such as `1.2.0`.
+  synonyms: [version]
+  see: [Newer]
+- term: Newer
+  definition: >
+    Of two releases, the one whose version number sorts later, as `packaging` compares them:
+    `1.10` is newer than `1.9`.
+  synonyms:
+    maintainers: [later]
+  see: [Release]

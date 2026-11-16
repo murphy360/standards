@@ -61,9 +61,14 @@ def hook(hook_id: str) -> dict[str, str]:
 # the manifest: valid, and each entry is a command the package installs
 
 
-def test_the_manifest_offers_the_three_hooks_and_each_is_valid():
+def test_the_manifest_offers_the_four_hooks_and_each_is_valid():
     hooks = manifest_hooks()
-    assert [h["id"] for h in hooks] == ["code-rules", "code-rules-node", "layering"]
+    assert [h["id"] for h in hooks] == [
+        "code-rules",
+        "code-rules-node",
+        "layering",
+        "glossary",
+    ]
     for h in hooks:
         assert REQUIRED_KEYS <= set(h) <= KNOWN_KEYS, h
         assert h["language"] == "python"  # pre-commit builds the environment itself
@@ -73,6 +78,7 @@ def test_the_manifest_offers_the_three_hooks_and_each_is_valid():
 def test_each_hook_runs_what_its_workflow_runs():
     assert "args" not in hook("code-rules")  # every file, every check: the default
     assert hook("code-rules-node")["args"] == "[--eslint, --no-format]"
+    assert hook("glossary")["args"] == "[--write]"  # a fixer; the check does not write
     # one script holds the step of both lint workflows
     step = (ROOT / "tools" / "steps" / "code-rules.sh").read_text()
     assert "args=(--eslint --no-format)" in step
