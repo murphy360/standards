@@ -114,9 +114,10 @@ def test_every_check_runs_though_the_first_one_failed(capsys):
         "secret-scan.sh",
         "layering.py",
         "reuse_report.py",
+        "glossary.py",
     ]
     out = capsys.readouterr().out.splitlines()
-    assert out[-8:] == [
+    assert out[-9:] == [
         "checks: standards-check: FAILED (exit 1), 0s",
         "checks: python-lint: passed, 0s",
         "checks: shell-lint: passed, 0s",
@@ -124,7 +125,8 @@ def test_every_check_runs_though_the_first_one_failed(capsys):
         "checks: secret-scan: passed, 0s",
         "checks: layering: passed, 0s",
         "checks: reuse: passed, 0s",
-        "checks: FAILED, 1 of 7: standards-check",
+        "checks: glossary: passed, 0s",
+        "checks: FAILED, 1 of 8: standards-check",
     ]
 
 
@@ -132,20 +134,20 @@ def test_the_exit_code_is_the_worst_one_and_the_summary_names_each_failure(capsy
     codes = {"code-rules.sh": 1, "secret-scan.sh": 125, "actionlint.sh": 3}
     code, recorder = run(codes=codes)
     assert code == 125  # the highest: docker's, which says gitleaks did not run
-    assert len(recorder.ran) == 8  # nothing was skipped
+    assert len(recorder.ran) == 9  # nothing was skipped
     out = capsys.readouterr().out
     assert "checks: python-lint: FAILED (exit 1), " in out
     assert "checks: actionlint: FAILED (exit 3), " in out
     assert "checks: secret-scan: FAILED (exit 125), " in out
     assert out.splitlines()[-1] == (
-        "checks: FAILED, 3 of 7: python-lint, actionlint, secret-scan"
+        "checks: FAILED, 3 of 8: python-lint, actionlint, secret-scan"
     )
 
 
 def test_a_clean_run_passes_and_says_how_many(capsys):
     code, _ = run()
     assert code == 0
-    assert capsys.readouterr().out.splitlines()[-1] == "checks: OK, 7 of 7 passed"
+    assert capsys.readouterr().out.splitlines()[-1] == "checks: OK, 8 of 8 passed"
 
 
 def test_inside_one_check_the_commands_stop_at_the_first_failure():
@@ -175,19 +177,27 @@ def test_the_lints_run_in_the_working_directory_and_the_rest_in_the_root():
     ]
 
 
-def test_layering_and_reuse_run_in_the_working_directory_and_reuse_reads_paths():
-    """Neither has a workflow or a step script: run_checks.py runs each tool."""
+def test_layering_reuse_and_glossary_run_in_the_working_directory():
+    """None has a workflow or a step script: run_checks.py runs each tool. reuse
+    reads paths, as the lints do."""
     env = {"WORKING_DIRECTORY": "api", "PATHS": "app tools"}
-    layering, reuse = (run_checks.commands(part, env) for part in ("layering", "reuse"))
+    layering, reuse, glossary = (
+        run_checks.commands(part, env) for part in ("layering", "reuse", "glossary")
+    )
     assert layering == [([sys.executable, str(TOOLS / "layering.py")], "api")]
+    assert glossary == [([sys.executable, str(TOOLS / "glossary.py")], "api")]
     assert reuse == [
         (
             [sys.executable, str(TOOLS / "reuse_report.py"), "--paths", "app", "tools"],
             "api",
         )
     ]
-    _, recorder = run(["layering", "reuse"])
-    assert recorder.ran == [("layering.py", "."), ("reuse_report.py", ".")]
+    _, recorder = run(["layering", "reuse", "glossary"])
+    assert recorder.ran == [
+        ("layering.py", "."),
+        ("reuse_report.py", "."),
+        ("glossary.py", "."),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -389,7 +399,7 @@ def test_one_run_reports_a_finding_of_every_tool(tmp_path):
     }
     res = run_for_real(scratch_project(tmp_path, files), "1")
     out = res.stdout
-    assert res.returncode == 123, out + res.stderr  # xargs', the highest of the seven
+    assert res.returncode == 123, out + res.stderr  # xargs', the highest of the eight
     assert "AGENTS.md is missing" in out and "standards: FAILED" in out
     assert "unused.py:1:8: F401" in out and "code_rules: FAILED" in out
     assert "stub docker: koalaman/shellcheck" in out
@@ -397,7 +407,8 @@ def test_one_run_reports_a_finding_of_every_tool(tmp_path):
     assert "stub docker: ghcr.io/gitleaks/gitleaks" in out and "revoke it first" in out
     assert "layering: no .importlinter here" in out  # it passes without one
     assert "reuse: informs, never fails" in out  # and the report never fails
-    last = [re.sub(r", \d+s$", "", line) for line in out.splitlines()[-8:]]
+    assert "glossary: no docs/terms.yaml here" in out  # it passes without one
+    last = [re.sub(r", \d+s$", "", line) for line in out.splitlines()[-9:]]
     assert last == [
         "checks: standards-check: FAILED (exit 1)",
         "checks: python-lint: FAILED (exit 1)",
@@ -406,7 +417,8 @@ def test_one_run_reports_a_finding_of_every_tool(tmp_path):
         "checks: secret-scan: FAILED (exit 1)",
         "checks: layering: passed",
         "checks: reuse: passed",
-        "checks: FAILED, 5 of 7: "
+        "checks: glossary: passed",
+        "checks: FAILED, 5 of 8: "
         "standards-check, python-lint, shell-lint, actionlint, secret-scan",
     ]
     # each check's lines come before the next check starts
@@ -423,7 +435,7 @@ def test_a_project_made_from_the_template_passes_every_check(tmp_path):
     assert res.returncode == 0, res.stdout + res.stderr
     assert "standards: OK" in res.stdout and "code_rules: OK" in res.stdout
     assert "secret scan: no finding" in res.stdout
-    assert res.stdout.splitlines()[-1] == "checks: OK, 7 of 7 passed"
+    assert res.stdout.splitlines()[-1] == "checks: OK, 8 of 8 passed"
 
 
 # --- the action: its inputs are the workflows', and each reaches its script ---
@@ -726,10 +738,11 @@ def test_the_report_sees_an_adopter_through_the_actions():
         fleet.summary_lines(counts, 2)
     )
     head = fleet.table(rows)[0].split()
-    assert head[:10] == [
+    assert head[:11] == [
         "repository",
         "actionlint",
         "checks",
+        "glossary",  # the template's step runs the default list
         "image",
         "layering",  # the template's step runs the default list
         "node",
@@ -740,8 +753,8 @@ def test_the_report_sees_an_adopter_through_the_actions():
     ]
     cells = fleet.table(rows)[1].split()
     short = SHA[:7]
-    assert cells[:10] == [
-        *("one-job", "-", f"{short},v2", "-", "-"),
+    assert cells[:11] == [
+        *("one-job", "-", f"{short},v2", "-", "-", "-"),
         *(short, "v2", "-", "-", short),
     ]
 
@@ -774,9 +787,10 @@ def test_the_rehearsal_runs_the_tools_the_way_a_checks_step_asks():
     ]
 
 
-def test_the_rehearsal_runs_layering_for_a_step_that_runs_it(tmp_path):
-    """The default list holds layering, so every caller that names no list gets it,
-    in its working-directory. reuse never fails, so it is not rehearsed."""
+def test_the_rehearsal_runs_layering_and_glossary_for_a_step_that_runs_them(tmp_path):
+    """The default list holds layering and glossary, so every caller that names no
+    list gets them, in its working-directory. reuse never fails, so it is not
+    rehearsed."""
     step = STEPS + (
         "      - uses: murphy360/standards/actions/checks@v3\n"
         "        with:\n          working-directory: api\n"
@@ -786,14 +800,16 @@ def test_the_rehearsal_runs_layering_for_a_step_that_runs_it(tmp_path):
         "check_standards.py",
         "code_rules.py",
         "layering.py",
+        "glossary.py",
     ]
-    assert fleet_rehearsal.plan(row, 3)[2] == {
-        "tool": "layering.py",
-        "args": [],
-        "cwd": "api",
-        "changed": False,
-    }
-    # a ref whose tools have no layering.py yet runs the others
+    for at, tool in ((2, "layering.py"), (3, "glossary.py")):
+        assert fleet_rehearsal.plan(row, 3)[at] == {
+            "tool": tool,
+            "args": [],
+            "cwd": "api",
+            "changed": False,
+        }
+    # a ref whose tools have no layering.py or glossary.py yet runs the others
     tools = tmp_path / "tools"
     tools.mkdir()
     for name in ("check_standards.py", "code_rules.py"):
@@ -862,11 +878,12 @@ def test_this_repository_runs_the_checks_the_way_the_template_does():
     _, second, third = job.split("      - if: ${{ !cancelled() }}\n")
     assert "          checks: node-lint\n" in second
     assert "          working-directory: tests/fixtures/node-project\n" in second
-    # layering on a project with a contract: the fixture's .importlinter
-    assert "          checks: layering reuse\n" in third
+    # layering on a project with a contract, and glossary on one with terms
+    assert "          checks: layering reuse glossary\n" in third
     assert third.endswith("          working-directory: tests/fixtures/python-project")
     fixture = ROOT / "tests" / "fixtures" / "python-project"
     assert (fixture / ".importlinter").is_file()
+    assert (fixture / "docs" / "terms.yaml").is_file()
 
 
 def test_the_readme_has_the_actions_the_one_job_and_what_a_run_costs():

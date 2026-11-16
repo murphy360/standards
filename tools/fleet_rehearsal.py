@@ -21,8 +21,9 @@ fleet.py finds the adopters; this module does the rest. For each adopter it:
    (``mode``, ``format-only``) is not read. Install the standard's default ruff
    first (``ruff_version.py --install``). A step that uses the ``checks`` action
    counts as a caller of each check it names, with the step's inputs
-   (``fleet.py``). A caller of ``layering`` gets ``layering.py`` in its
-   ``working-directory``, when the ref has it. ``reuse`` never fails, so it is
+   (``fleet.py``). A caller of ``layering`` gets ``layering.py``, and a caller of
+   ``glossary`` gets ``glossary.py``, in its ``working-directory``, when the ref
+   has it. ``reuse`` never fails, so it is
    not rehearsed;
 4. prints pass or FAIL, and the last line of each tool;
 5. deletes the clone. The temporary directory goes when the run ends, however
@@ -131,9 +132,9 @@ def plan(row: dict, major: int = 2) -> list[dict]:
                 "cwd": ".",
                 "changed": False,
             }
-        elif call["workflow"] == "layering":
+        elif call["workflow"] in ("layering", "glossary"):
             step = {
-                "tool": "layering.py",
+                "tool": f"{call['workflow']}.py",
                 "args": [],
                 "cwd": plain(given.get("working-directory")) or ".",
                 "changed": False,

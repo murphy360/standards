@@ -31,3 +31,13 @@
   entry: layering
   language: python
   pass_filenames: false
+# The glossary: what the `glossary` check of the checks action runs. docs/GLOSSARY.md must be what docs/terms.yaml
+# gives; a project without a terms file passes. A project whose docs are in a subdirectory passes
+# `--terms <dir>/docs/terms.yaml` in `args`. `args: [--write]` makes the hook rewrite the page instead: pre-commit
+# then fails the run once, because a file changed, and the next run passes.
+- id: glossary
+  name: glossary (docs/terms.yaml makes docs/GLOSSARY.md)
+  description: What the glossary check runs. The page is what the terms give, and no name is defined twice.
+  entry: glossary
+  language: python
+  pass_filenames: false

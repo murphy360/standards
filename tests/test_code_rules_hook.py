@@ -30,7 +30,10 @@ REQUIRED_KEYS = {"id", "name", "entry", "language"}
 KNOWN_KEYS = REQUIRED_KEYS | {"description", "args", "pass_filenames"}
 # the one tool a document may tell a reader to run from a checkout of this repository:
 # it copies the templates out of that checkout (README, "Staying current")
-NEEDS_A_CHECKOUT = {"sync_templates.py"}
+NEEDS_A_CHECKOUT = {
+    "sync_templates.py",
+    "glossary.py",
+}  # each writes files of the project
 STANDARDS_HOOK_RE = re.compile(
     r"^  - repo: https://github\.com/murphy360/standards\n"
     r"    rev: ([0-9a-f]{40})  # (\S.*)\n"
@@ -61,9 +64,14 @@ def hook(hook_id: str) -> dict[str, str]:
 # the manifest: valid, and each entry is a command the package installs
 
 
-def test_the_manifest_offers_the_three_hooks_and_each_is_valid():
+def test_the_manifest_offers_the_four_hooks_and_each_is_valid():
     hooks = manifest_hooks()
-    assert [h["id"] for h in hooks] == ["code-rules", "code-rules-node", "layering"]
+    assert [h["id"] for h in hooks] == [
+        "code-rules",
+        "code-rules-node",
+        "layering",
+        "glossary",
+    ]
     for h in hooks:
         assert REQUIRED_KEYS <= set(h) <= KNOWN_KEYS, h
         assert h["language"] == "python"  # pre-commit builds the environment itself
