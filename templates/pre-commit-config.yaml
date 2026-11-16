@@ -27,11 +27,13 @@ repos:
   # the format, on every tracked file. pre-commit builds the hook with its own pinned ruff: nothing to install.
   # Move the rev to the release's commit when the standard releases, so that the hook and CI hold the same rules.
   - repo: https://github.com/murphy360/standards
-    rev: 8859847dde0eef46f29129b775a86814ce51654b  # v3.0.0
+    rev: a7036c67d912660d8386021ee869c16b5c70d36b  # v3.1.0
     hooks:
       - id: code-rules
         # args: [--paths, src, tools]  # the lint job's `paths`, `--no-format` without `format-check: true`
       # - id: code-rules-node  # a JavaScript or TypeScript project: what node-lint runs (after npm ci)
+      - id: layering  # the project's .importlinter contracts; passes when there is none
+      - id: glossary  # writes docs/GLOSSARY.md from docs/terms.yaml; passes when there is none
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: 745eface02aef23e168a8afb6b5737818efbea95  # v0.11.0.1 (shellcheck 0.11.0)
     hooks:
