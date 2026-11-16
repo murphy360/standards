@@ -16,7 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -51,10 +51,8 @@ NOT_AN_ACTION_INPUT = {"runs-on", "standards-ref"}  # the job's own, and not nee
 ENV_OF = {
     "checks": "CHECKS",
     "working-directory": "WORKING_DIRECTORY",
-    "mode": "MODE",
     "paths": "PATHS",
     "format-check": "FORMAT_CHECK",
-    "format-only": "FORMAT_ONLY",
     "no-inline-config": "NO_INLINE_CONFIG",
     "silencers": "SILENCERS",
     "ruff-version": "CODE_RULES_RUFF_VERSION",
@@ -284,12 +282,25 @@ DEPENDABOT = (
 )
 
 
+# Every template a project copies, at the path it copies it to: the checks of
+# standards-check all run by default.
+COPIED = {
+    "AGENTS.md": "AGENTS.md",
+    "CLAUDE.md": "CLAUDE.md",
+    ".github/pull_request_template.md": "pull_request_template.md",
+    ".github/ISSUE_TEMPLATE/ticket.md": "ISSUE_TEMPLATE/ticket.md",
+    ".pre-commit-config.yaml": "pre-commit-config.yaml",
+    ".claude/settings.json": "claude/settings.json",
+    ".claude/guard.py": "claude/guard.py",
+}
+
+
 def scratch_project(tmp_path: Path, files: dict[str, str | None]) -> Path:
-    """A project made from the CI template, committed, with a stub docker and a
-    stub pip beside it. A file given as None is left out."""
+    """A project made from the templates, committed, with a stub docker and a stub
+    pip beside it. A file given as None is left out."""
     root = tmp_path / "project"
     given = {
-        "AGENTS.md": "# A project\n",
+        **{rel: (ROOT / "templates" / src).read_text() for rel, src in COPIED.items()},
         ".github/dependabot.yml": DEPENDABOT,
         ".github/workflows/ci.yml": TEMPLATE,
         "run.sh": "#!/bin/sh\necho hi\n",
@@ -321,7 +332,6 @@ def run_for_real(root: Path, stub_exit: str):
         "RUNNER_TEMP": str(root.parent / "runner-temp"),
         "STUB_EXIT": stub_exit,
         "EVENT": "schedule",
-        "MODE": "all",
         "FORMAT_CHECK": "true",
     }
     (root.parent / "runner-temp").mkdir(exist_ok=True)
@@ -341,12 +351,13 @@ def test_one_run_reports_a_finding_of_every_tool(tmp_path):
     gitleaks are images: the stand-in exits 1, as each does on a finding."""
     files = {
         "AGENTS.md": None,  # standards-check: no instruction file
+        "CLAUDE.md": None,
         "unused.py": "import os\n",  # ruff: F401
     }
     res = run_for_real(scratch_project(tmp_path, files), "1")
     out = res.stdout
     assert res.returncode == 123, out + res.stderr  # xargs', the highest of the five
-    assert "AGENTS.md is missing" in out and "standards: FAILED, 1 gap(s)" in out
+    assert "AGENTS.md is missing" in out and "standards: FAILED" in out
     assert "unused.py:1:8: F401" in out and "code_rules: FAILED" in out
     assert "stub docker: koalaman/shellcheck" in out
     assert "stub docker: rhysd/actionlint" in out
@@ -429,7 +440,7 @@ def test_each_input_reaches_the_script_under_the_name_the_script_reads():
     assert "python-version: ${{ inputs.python-version }}" in ACTION
     assert "node-version: ${{ inputs.node-version }}" in ACTION
     # what a workflow's steps read of the event, the action's step reads the same
-    for workflow in ("python-lint", "secret-scan"):
+    for workflow in ("secret-scan",):  # the lints read none since v3
         text = (WORKFLOWS / f"{workflow}.yml").read_text()
         for variable in ("EVENT", "PR_BASE", "BEFORE"):
             line = re.search(rf"^ +{variable}: (.*)$", text, re.MULTILINE).group(1)
@@ -550,8 +561,8 @@ def test_a_project_made_from_the_template_follows_the_standards(tmp_path):
     live = [line for line in TEMPLATE.splitlines() if not line.lstrip().startswith("#")]
     reusable = [line for line in live if "/.github/workflows/" in line]
     assert [line.split("/")[-1] for line in reusable] == [
-        "test-docker.yml@v2",
-        "image.yml@v2",
+        "test-docker.yml@v3",
+        "image.yml@v3",
     ]  # the five checks are one job now; the old jobs are a note
 
 
@@ -662,7 +673,7 @@ def node(name: str, ci: str) -> dict:
 
 
 def test_the_report_sees_an_adopter_through_the_actions():
-    now = datetime(2026, 11, 13, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 13, tzinfo=UTC)
     rows = fleet.report(
         [node("one-job", ONE_JOB), node("template", TEMPLATE)], "someone", 2, now
     )
@@ -670,7 +681,7 @@ def test_the_report_sees_an_adopter_through_the_actions():
     assert one_job["kinds"] == ["current", "sha"] and one_job["one_job"] is True
     assert one_job["lint_mode"] == "all+changed"  # python-lint, and node-lint changed
     assert template["kinds"] == ["current"] and template["one_job"] is True
-    assert template["lint_mode"] == "all" and template["format_only"] is True
+    assert template["lint_mode"] == "all" and template["format_only"] is False
     assert template["templates"]["result"] is True
     counts = fleet.summary(rows)
     assert (counts["adopters"], counts["one_job"], counts["sha"]) == (2, 2, 1)
@@ -714,6 +725,11 @@ def test_the_rehearsal_runs_the_tools_the_way_a_checks_step_asks():
             "changed": False,
         },
     ]  # node-lint is not rehearsed, as for a caller of node-lint.yml
+    v3 = fleet_rehearsal.plan(row, 3)  # every check on, so a `true` needs no flag
+    assert [step["args"] for step in v3] == [
+        [],
+        ["--no-format", *("--paths", "src", "tools")],
+    ]
 
 
 def test_the_ruff_check_reads_the_lint_of_a_checks_step(tmp_path):
@@ -755,7 +771,7 @@ def test_the_template_has_one_checks_job_that_is_the_projects_own():
         named = re.search(rf"^\s+(# )?{name}: ", job, re.MULTILINE)
         versions = name in ("shellcheck-version", "actionlint-version", "ruff-version")
         assert named or versions, f"templates/ci.yml does not show `{name}`"
-    assert "They are removed in v3." in TEMPLATE  # the old jobs, as a note
+    assert "A later major removes them." in TEMPLATE  # the old jobs, as a note
 
 
 def test_this_repository_runs_the_checks_the_way_the_template_does():
@@ -776,4 +792,4 @@ def test_the_readme_has_the_actions_the_one_job_and_what_a_run_costs():
     assert "| `tools/run_checks.py` |" in text
     cost = text.split("### What a run costs", 1)[1].split("\n## ", 1)[0]
     assert "Measured" in cost and "Arithmetic" in cost
-    assert "billed" in cost and "removed in v3" in text
+    assert "billed" in cost and "a later major removes them" in text

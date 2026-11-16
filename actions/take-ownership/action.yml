@@ -1,7 +1,7 @@
 # Take back the files a previous job's containers left in the workspace of a self-hosted runner, so that the
 # checkout that follows can replace them. The first step of a project's own job, before actions/checkout:
 #   steps:
-#     - uses: murphy360/standards/actions/take-ownership@v2
+#     - uses: murphy360/standards/actions/take-ownership@v3
 #     - uses: actions/checkout@<commit SHA>  # <version>
 # On a GitHub-hosted runner it does nothing: every job there starts on a new machine.
 # The step is tools/steps/take-ownership.sh, the one the check workflows run. An action finds its own files through

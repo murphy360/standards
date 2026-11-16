@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Which ruff a project is linted with, and where that version is written.
 
-    python3 ruff_version.py                   # ruff <version> (the standard's default)
-    python3 ruff_version.py --project-ruff    # ruff <version> (the project's pin, ...)
-    python3 ruff_version.py --install         # print it, then pip install it
+    python3 ruff_version.py                    # ruff <version> (the project's pin, ...)
+    python3 ruff_version.py --no-project-ruff  # ruff <version> (the standard's default)
+    python3 ruff_version.py --install          # print it, then pip install it
 
 ``python-lint`` and ``node-lint`` run this file to install ruff, and
 ``code_rules.py`` imports it, so CI and the ``code-rules`` hook choose the same way.
 The version comes from the first of three places that names one:
 
 1. **Given**: ``--ruff-version`` (the ``ruff-version`` input of the workflows).
-2. **The project's pin**, with ``--project-ruff`` (the ``project-ruff`` input; off by
-   default in v2): a ``ruff==<version>`` line in the project's development
+2. **The project's pin**, unless ``--no-project-ruff`` (``project-ruff: false`` on
+   the workflows; on by default since v3): a ``ruff==<version>`` line in the project's development
    requirements. They are read in this order, and the first pin wins:
    ``requirements-dev.txt``, every other ``requirements*.txt`` by name, then
    ``[dependency-groups]`` and ``[project.optional-dependencies]`` of
@@ -21,16 +21,16 @@ The version comes from the first of three places that names one:
 3. **The standard's default**: the one dependency of this repository's own
    ``pyproject.toml``, the one place it is written. Dependabot moves it there.
 
-Without a flag ``code_rules.py`` runs the ruff on PATH, whatever its version, as it
-always has: the workflow installed it, and pre-commit built the hook with it. With
-``--ruff-version`` or ``--project-ruff`` it runs that version and no other. It takes
+``code_rules.py`` runs the chosen version and no other. With ``--no-project-ruff``
+and no ``--ruff-version`` it runs the ruff on PATH, whatever its version: the
+workflow installed it, and pre-commit built the hook with it. It takes
 the ruff on PATH when that is the one, and otherwise installs it with pip into a
 directory of its own: inside the environment that runs it (pre-commit's hook
 environment), or the user's cache directory. So the hook follows a project's pin by
 itself, and a Dependabot pull request that moves the pin moves CI and the hook.
 
-``pin_problems`` is the opt-in check of ``check_standards.py``
-(``--require-one-ruff-version``): every place a project names a ruff version names
+``pin_problems`` is a check of ``check_standards.py``
+(``--require-one-ruff-version``, on by default): every place a project names a ruff version names
 the same one.
 
 Standard library only.
@@ -74,15 +74,16 @@ LINT_WORKFLOWS = ("python-lint", "node-lint")
 # releases: "Would reformat: <path>" and "error: Failed to parse <path>:1:2: ...".
 # Newer ones print a diagnostic, "unformatted: ..." or "invalid-syntax: ...", and on
 # the next line " --> <path>:1:2".
-REFORMAT_RE = re.compile(r"^Would reformat: (.+?)\s*$", re.M)
+REFORMAT_RE = re.compile(r"^Would reformat: (.+?)\s*$", re.MULTILINE)
 PARSE_RE = re.compile(r"Failed to parse (.+?):\d+:\d+:")
 DIAGNOSTIC_RE = re.compile(
-    r"^(unformatted|invalid-syntax): .*\n\s*--> (.+?):\d+:\d+", re.M
+    r"^(unformatted|invalid-syntax): .*\n\s*--> (.+?):\d+:\d+", re.MULTILINE
 )
 ONE_VERSION = (
-    "Pin ruff once in requirements-dev.txt (`ruff==<version>`), pass `project-ruff: "
-    "true` to the lint job and `--project-ruff` in the args of the code-rules hook, "
-    "and set the ruff-pre-commit rev to the commit of the same release"
+    "Pin ruff once in requirements-dev.txt (`ruff==<version>`), drop "
+    "`project-ruff: false` from the lint job and `--no-project-ruff` from the args of "
+    "the code-rules hook, and set the ruff-pre-commit rev to the commit of the same "
+    "release"
 )
 
 
@@ -130,7 +131,8 @@ def pyproject_pins(path: Path) -> list[tuple[str, str]]:
     project = doc.get("project")
     extras = project.get("optional-dependencies") if isinstance(project, dict) else {}
     pins = []
-    for name, table in zip(GROUP_TABLES, (doc.get("dependency-groups"), extras)):
+    tables = (doc.get("dependency-groups"), extras)
+    for name, table in zip(GROUP_TABLES, tables, strict=True):
         for group, entries in table.items() if isinstance(table, dict) else ():
             for entry in entries if isinstance(entries, list) else ():
                 pin = PIN_RE.match(entry) if isinstance(entry, str) else None
@@ -227,7 +229,7 @@ def provision(version: str, target: Path) -> None:
     os.replace(fresh, target)
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def at_version(version: str) -> tuple[str, ...]:
     """The command of one ruff release: the one on PATH, or one installed for it."""
     here = path_command()
@@ -253,7 +255,7 @@ def command(version: str | None = None) -> list[str]:
 
 def chosen(root: Path, given: str = "", project: bool = False) -> dict[str, str]:
     """What ``code_rules.py`` keeps of the flags: the version to run, and nothing
-    without a flag. It prints the choice, so the log says which ruff ran and why."""
+    with ``--no-project-ruff`` and no ``--ruff-version``. It prints the choice, so the log says which ruff ran and why."""
     if not (given or "").strip() and not project:
         return {}
     version, source = choose(root, given, project)
@@ -263,7 +265,8 @@ def chosen(root: Path, given: str = "", project: bool = False) -> dict[str, str]
 
 def add_arguments(ap: argparse.ArgumentParser) -> None:
     """The two flags, for this file and ``code_rules.py``. A workflow sets them in
-    the environment once, for the step that installs and the step that lints."""
+    the environment once, for the step that installs and the step that lints. The
+    project's pin is read unless the environment says ``false``."""
     ap.add_argument(
         "--ruff-version",
         default=os.environ.get(VERSION_ENV, ""),
@@ -272,14 +275,14 @@ def add_arguments(ap: argparse.ArgumentParser) -> None:
     )
     ap.add_argument(
         "--project-ruff",
-        action="store_true",
-        default=os.environ.get(PROJECT_ENV, "") == "true",
+        action=argparse.BooleanOptionalAction,
+        default=os.environ.get(PROJECT_ENV, "") != "false",
         help="run the ruff the project pins in its development requirements "
         "(`ruff==<version>`), and the standard's default when it pins none",
     )
 
 
-# the opt-in check: every place a project names a ruff version names the same one
+# the check: every place a project names a ruff version names the same one
 
 
 def hook_words(lines: list[str], start: int, indent: int) -> list[str]:
@@ -313,7 +316,7 @@ def flags(words: list[str]) -> tuple[str, bool, str]:
             given = value
         elif key == "--root":
             root = value
-    return given, "--project-ruff" in words, root
+    return given, "--no-project-ruff" not in words, root
 
 
 def hook_versions(root: Path, config: str) -> list[tuple[str, str]]:
@@ -373,7 +376,7 @@ def lint_directory(given: dict) -> str:
 
 
 def pin_problems(root: Path, files: list[str], calls) -> list[str]:
-    """The opt-in check: the ruff versions a project names, when they differ.
+    """The check: the ruff versions a project names, when they differ.
 
     The places: the pins in its development requirements (at the root and in each
     directory a lint job runs in), the ruff-pre-commit rev, what each code-rules
@@ -390,7 +393,7 @@ def pin_problems(root: Path, files: list[str], calls) -> list[str]:
         if "${{" in version:
             continue  # only a run resolves an expression
         version, source = choose(
-            root / lint_directory(given), version, given.get("project-ruff") == "true"
+            root / lint_directory(given), version, given.get("project-ruff") != "false"
         )
         places.append((version, f"{name} ({source})"))
     problems = []

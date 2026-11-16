@@ -38,8 +38,8 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 TOOLS = Path(__file__).resolve().parent
 STEPS = TOOLS / "steps"

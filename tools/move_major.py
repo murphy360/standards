@@ -59,7 +59,7 @@ class Api:
                 return None
             raise SystemExit(
                 f"move_major: {method} {path}: HTTP {err.code} {err.reason}"
-            )
+            ) from err
 
 
 def version(tag: str) -> tuple[int, int, int] | None:

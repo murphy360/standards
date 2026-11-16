@@ -331,7 +331,7 @@ def tsc_findings(root: Path) -> tuple[list[dict], str]:
 def report(found: list[dict], tool: str) -> list[str]:
     """One line per file that fails, then one line per finding, as code_rules has."""
     counts = Counter(f"{f['rel']}::{f['code']}" for f in found)
-    problems = code_rules.rule_lines("types", counts, tool, None)
+    problems = code_rules.rule_lines(counts, tool, "types")
     return problems + code_rules.explained(found, {f["rel"] for f in found})
 
 

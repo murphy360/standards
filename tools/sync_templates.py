@@ -105,8 +105,8 @@ def read(path: Path) -> str:
     """A file's text with its line endings as they are."""
     try:
         return path.read_bytes().decode("utf-8")
-    except UnicodeDecodeError:
-        raise TemplateError(f"{path.name} is not UTF-8 text")
+    except UnicodeDecodeError as err:
+        raise TemplateError(f"{path.name} is not UTF-8 text") from err
 
 
 def markers(lines: list[str], name: str) -> tuple[int, int] | None:

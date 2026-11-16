@@ -10,7 +10,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "tools"))  # fleet.py imports its sibling module
 fleet = importlib.import_module("fleet")
 fleet_rehearsal = importlib.import_module("fleet_rehearsal")
 
-NOW = datetime(2026, 11, 13, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
 SHA = "0123456789abcdef0123456789abcdef01234567"
 CI = f"""\
 name: ci
@@ -421,6 +421,14 @@ def test_the_default_major_is_the_one_this_repository_is_at():
     text = (ROOT / "pyproject.toml").read_text()
     major = int(re.search(r'^version = "(\d+)\.', text, re.MULTILINE).group(1))
     assert fleet.default_major() == major
+
+
+def test_the_rehearsal_reads_the_major_of_the_tree_it_runs(tmp_path):
+    """The defaults it models: v3's when the tree says 3, v2's when it says less."""
+    assert fleet_rehearsal.major_of(ROOT) == fleet.default_major() >= 3
+    assert fleet_rehearsal.major_of(tmp_path) == 2  # no pyproject.toml: v2's tools
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "2.4.1"\n')
+    assert fleet_rehearsal.major_of(tmp_path) == 2
 
 
 def test_the_report_is_never_written_to_a_file(capsys):

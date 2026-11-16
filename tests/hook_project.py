@@ -10,12 +10,12 @@ Run as a script, this file proves that the hook and the tool agree:
 
 It builds the ``code-rules`` hook from the commit that is checked out here, as a
 project's ``pre-commit run --all-files`` would, and compares what the hook prints with
-what ``python3 tools/code_rules.py --all`` prints: the lines CI prints. It needs the
+what ``python3 tools/code_rules.py`` prints: the lines CI prints. It needs the
 network (pre-commit installs ruff into the hook's environment), so it is a CI job of
 this repository (``hook`` in ci.yml) and no pytest test.
 
-It then does the same on a project that pins its own ruff, with ``--project-ruff``:
-the release the python-lint fixture pins (``tests/fixtures/python-project``), and one
+It then does the same on a project that pins its own ruff, which the hook runs by
+default since v3: the release the python-lint fixture pins (``tests/fixtures/python-project``), and one
 more file, laid out as that release formats it. The default ruff would re-format it.
 The hook must say that it runs the pinned release, and must not report the file.
 """
@@ -48,7 +48,7 @@ EXPECTED = (
     "hid",
     f"  tangled.py:1:5: C901 `tangled` is too complex (16 > 15). Fix: {FIX}",
     "code_rules: FAILED, 3 problem(s) (left in the repository: 1 finding(s), 1 "
-    "file(s) over the size limit, 0 file(s) not formatted)",
+    "file(s) over the size limit, 0 file(s) not formatted, 0 silencer(s))",
 )
 
 
@@ -140,13 +140,11 @@ def compare(
 
 def main() -> int:
     rev = git(ROOT, "rev-parse", "HEAD")
-    problems = compare(rev, ["--all"], {}, EXPECTED)
+    problems = compare(rev, [], {}, EXPECTED)
     pin = fixture_pin()
     pinned = {PINNED: f"ruff=={pin}\n", "new_style.py": NEW_STYLE}
     said = f"code_rules: ruff {pin} (the project's pin, {PINNED})"
-    problems += compare(
-        rev, ["--all", "--project-ruff"], pinned, (said,), "new_style.py"
-    )
+    problems += compare(rev, [], pinned, (said,), "new_style.py")
     for problem in problems:
         print(f"hook_project: {problem}")
     print(

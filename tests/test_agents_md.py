@@ -13,7 +13,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -40,6 +40,15 @@ DEPENDABOT = (
     "version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n"
 )
 TO_AGENTS = "--to-agents-md"
+# The six checks standards-check runs by default since v3, each turned off.
+ONLY_THE_BASE = [
+    "--no-require-pr-template",
+    "--no-require-pre-commit",
+    "--no-require-ticket-template",
+    "--no-require-current-templates",
+    "--no-require-agent-settings",
+    "--no-require-one-ruff-version",
+]
 
 
 def instructions(shared: str = SHARED) -> str:
@@ -232,7 +241,7 @@ def test_this_repository_has_the_layout_with_its_own_text():
 def test_the_base_check_accepts_either_instruction_file(tmp_path, files, capsys):
     root = project(tmp_path, files)
     assert standards.check(root) == []
-    assert standards.main(["--root", str(root)]) == 0
+    assert standards.main(["--root", str(root), *ONLY_THE_BASE]) == 0
     assert capsys.readouterr().out == "standards: OK\n"
 
 
@@ -248,13 +257,18 @@ WORKFLOW_STEP = ROOT / "tools" / "steps" / "standards-check.sh"
 
 @pytest.mark.parametrize("templates", ["false", "true"])
 def test_a_project_with_only_agents_md_passes_the_workflow(tmp_path, templates):
-    """The workflow's own step, against the real tools: with every check off, as
-    an adopter calls it today, and with the template check on."""
+    """The workflow's own step, against the real tools: with every other check off,
+    and the template check off and on."""
     root = project(tmp_path, {"AGENTS.md": instructions()})
+    off = {
+        f"CHECK_{name}": "false"
+        for name in ("PR_TEMPLATE", "PRE_COMMIT_CONFIG", "TICKET_TEMPLATE")
+    }
+    off |= {"CHECK_AGENT_SETTINGS": "false", "CHECK_RUFF_VERSION": "false"}
     res = subprocess.run(
         ["bash", str(WORKFLOW_STEP)],
         cwd=root,
-        env={"PATH": os.environ["PATH"], "CHECK_TEMPLATES": templates},
+        env={"PATH": os.environ["PATH"], **off, "CHECK_TEMPLATES": templates},
         capture_output=True,
         text=True,
     )
@@ -580,7 +594,7 @@ def test_the_fleet_report_names_the_instruction_file():
     assert fleet.instructions({"CLAUDE.md"}) == "CLAUDE.md"
     assert fleet.instructions({"AGENTS.md", "CLAUDE.md"}) == "both"
     assert fleet.instructions({"README.md"}) is None
-    now = datetime(2026, 11, 13, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 13, tzinfo=UTC)
     rows = []
     for name, root in (
         ("alpha", ("AGENTS.md",)),

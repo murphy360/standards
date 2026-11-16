@@ -1,6 +1,6 @@
 """The rehearsal before a release: the candidate tools against every adopter.
 
-    python3 fleet.py --run-tools v2.3.0
+    python3 fleet.py --run-tools v3.0.0
 
 fleet.py finds the adopters; this module does the rest. For each adopter it:
 
@@ -8,21 +8,27 @@ fleet.py finds the adopters; this module does the rest. For each adopter it:
    (``git archive``, so a tag, a branch or a commit all work, and nothing is
    fetched);
 2. clones the adopter into a temporary directory (``gh repo clone``, depth 1);
-3. runs the tools the way the adopter's workflows would. A repository that calls
-   ``python-lint`` gets ``code_rules.py --all``, with ``--no-format`` unless it
-   sets ``format-check: true``, and with its ``paths``, ``working-directory``,
-   ``project-ruff`` and ``ruff-version``. Without the last two the ruff on PATH
-   runs, so install the standard's default (``ruff_version.py --install``).
-   A repository that calls ``standards-check`` gets ``check_standards.py``, with
-   the opt-in checks it turned on. A step that uses the ``checks`` action counts
-   as a caller of each check it names, with the step's inputs (``fleet.py``);
+3. runs the tools the way the adopter's workflows would, with the defaults of the
+   ref's major (``version`` in its ``pyproject.toml``). A repository that calls
+   ``python-lint`` gets ``code_rules.py``, with ``--no-format`` unless it sets
+   ``format-check: true``, and with its ``paths``, ``working-directory``,
+   ``silencers``, ``project-ruff`` and ``ruff-version``. A repository that calls
+   ``standards-check`` gets ``check_standards.py`` with its ``check-*`` inputs.
+   Up to v2 each of those is off unless the caller sets it ``true``, and
+   ``code_rules.py`` gets ``--all``; from v3 each is on unless the caller sets it
+   ``false``. So a rehearsal of v3 shows what an adopter meets once it has moved:
+   the ``true`` lines it no longer needs are gone, and an input v3 removed
+   (``mode``, ``format-only``) is not read. Install the standard's default ruff
+   first (``ruff_version.py --install``). A step that uses the ``checks`` action
+   counts as a caller of each check it names, with the step's inputs
+   (``fleet.py``);
 4. prints pass or FAIL, and the last line of each tool;
 5. deletes the clone. The temporary directory goes when the run ends, however
    it ends.
 
-``debt`` is a third result: ``code_rules.py --all`` failed in a repository that
-lints in ``mode: changed``. Its pull requests check only the files they touch, so
-a finding elsewhere does not fail them.
+``debt`` is a third result: ``code_rules.py`` failed in a repository that lints in
+``mode: changed`` (v2). Its pull requests check only the files they touch, so a
+finding elsewhere does not fail them yet. At v3 it narrows ``paths`` instead.
 
 ``code_rules.py`` needs ruff. Where ruff is not on PATH, the rehearsal stops and
 prints the Docker command that runs it (``docker_hint``).
@@ -34,6 +40,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -42,6 +49,9 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
+# Each input, and the flag that turns it on. From v3 the flag is on by default, and
+# `--no-<flag>` turns it off.
+LINT_FLAGS = (("silencers", "--silencers"), ("project-ruff", "--project-ruff"))
 CHECK_FLAGS = (
     ("check-pr-template", "--require-pr-template"),
     ("check-pre-commit-config", "--require-pre-commit"),
@@ -77,8 +87,17 @@ def plain(value: str | None) -> str:
     return value if value and "${{" not in value else ""
 
 
-def plan(row: dict) -> list[dict]:
-    """The tool runs a repository's callers ask for, each once.
+def switches(given: dict, flags: tuple, major: int) -> list[str]:
+    """The flags of the inputs a caller set: up to v2 each input set ``true`` turns
+    its check on; from v3 each set ``false`` turns it off."""
+    if major >= 3:
+        return [f"--no-{flag[2:]}" for key, flag in flags if given.get(key) == "false"]
+    return [flag for key, flag in flags if given.get(key) == "true"]
+
+
+def plan(row: dict, major: int = 2) -> list[dict]:
+    """The tool runs a repository's callers ask for, each once, with the defaults
+    of ``major``.
 
     Two callers that ask for the same run share it. The run is in mode changed
     only when every one of them is.
@@ -87,14 +106,13 @@ def plan(row: dict) -> list[dict]:
     for call in row["calls"]:
         given = call["with"]
         if call["workflow"] == "python-lint":
-            args = ["--all"]
+            args = ["--all"] if major < 3 else []
             if given.get("format-check") != "true":
                 args.append("--no-format")
             paths = plain(given.get("paths")).split()
             if paths:
                 args += ["--paths", *paths]
-            if given.get("project-ruff") == "true":
-                args.append("--project-ruff")
+            args += switches(given, LINT_FLAGS, major)
             if plain(given.get("ruff-version")):
                 args += ["--ruff-version", plain(given.get("ruff-version"))]
             step = {
@@ -104,7 +122,7 @@ def plan(row: dict) -> list[dict]:
                 "changed": given.get("mode") == "changed",
             }
         elif call["workflow"] == "standards-check":
-            args = [flag for key, flag in CHECK_FLAGS if given.get(key) == "true"]
+            args = switches(given, CHECK_FLAGS, major)
             step = {
                 "tool": "check_standards.py",
                 "args": args,
@@ -134,7 +152,7 @@ def tools_at(ref: str, root: Path, dest: Path) -> Path:
     try:
         res = subprocess.run(cmd, capture_output=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as e:
-        raise RuntimeError(f"git did not run ({e})")
+        raise RuntimeError(f"git did not run ({e})") from e
     if res.returncode != 0:
         why = last_line(res.stderr.decode(errors="replace"))
         raise RuntimeError(
@@ -144,6 +162,16 @@ def tools_at(ref: str, root: Path, dest: Path) -> Path:
     with tarfile.open(fileobj=io.BytesIO(res.stdout)) as tar:
         tar.extractall(dest, filter="data")
     return dest / "tools"
+
+
+def major_of(tree: Path) -> int:
+    """The major of a tree of this repository: ``version`` in its pyproject.toml."""
+    try:
+        text = (tree / "pyproject.toml").read_text()
+    except OSError:
+        return 2
+    m = re.search(r'^version\s*=\s*"(\d+)\.', text, re.MULTILINE)
+    return int(m.group(1)) if m else 2
 
 
 def gh_clone(slug: str, dest: Path) -> str | None:
@@ -174,7 +202,7 @@ def worst(results: list[str]) -> str:
 def rehearse_one(row: dict, slug: str, tools: Path, dest: Path, clone, run) -> dict:
     """Clone one adopter, run its tools, delete the clone."""
     out = {"name": row["name"], "result": "-", "runs": []}
-    steps = plan(row)
+    steps = plan(row, major_of(tools.parent))
     if not steps:
         return out
     try:
@@ -245,8 +273,9 @@ def closing_lines(results: list[dict], rows: list[dict], ref: str) -> list[str]:
     out = [f"{len(results)} adopters rehearsed at {ref}: {', '.join(parts) or 'none'}."]
     if counts["debt"]:
         out.append(
-            "debt: `code_rules.py --all` fails, but the repository lints in mode "
-            "changed, so its pull requests check only the files they touch."
+            "debt: `code_rules.py` fails, but the repository lints in mode changed "
+            "(v2), so its pull requests check only the files they touch. At v3 it "
+            "narrows `paths` instead."
         )
     node = sum(
         any(c["workflow"] == "node-lint" for c in r["calls"])

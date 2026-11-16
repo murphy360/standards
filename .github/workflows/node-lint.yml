@@ -1,41 +1,37 @@
 # JavaScript and TypeScript lint (tools/code_rules.py --eslint): the project's ESLint and eslint.config.* plus the
-# standard complexity limits (complexity 15, 60 statements) and the file-size limit. The standard is that every file
-# is clean: mode all (the default) checks every file on every run, and a finding anywhere fails. Each finding is
-# printed with its line, its rule and how to fix it. format-check adds prettier --check in the same scope. ESLint and
-# Prettier come from the project's devDependencies: its lockfile pins them and Dependabot updates them.
+# standard complexity limits (complexity 15, 60 statements) and the file-size limit. An eslint-disable comment hides
+# nothing and is a problem, and every silencer carries its reason. The standard is that every file is clean: every
+# run checks every file in `paths`, and a finding anywhere fails. Each finding is printed with its line, its rule and
+# how to fix it. format-check adds prettier --check on every file in `paths`. ESLint and Prettier come from the
+# project's devDependencies: its lockfile pins them and Dependabot updates them.
 # A project that also tracks Python files gets the ruff rules too, and its ruff config cannot switch one off
 # (python-lint.yml says how).
-# Added in v2.2.0. A project already pinned at @v2 sees nothing new until it calls this workflow.
 # Call it from a project:
 #   jobs:
 #     lint:
-#       uses: murphy360/standards/.github/workflows/node-lint.yml@v2
+#       uses: murphy360/standards/.github/workflows/node-lint.yml@v3
 #       with:
 #         format-check: true
-#         # mode: changed     # a project still paying down its debt: every file a change touches must be clean
-#         # paths: src        # only these directories (default: every tracked file)
-#         # no-inline-config: true  # an eslint-disable comment hides nothing and is a problem; the default in v3
-#         # silencers: true         # a .skip in a test carries its reason and .only is a problem; the default in v3
-#         # project-ruff: true      # Python files are linted with the ruff the project pins; the default in v3
+#         # paths: src        # only these directories (default: every tracked file); a project with debt says why
+#         # no-inline-config: false  # let an eslint-disable comment hide a finding
+#         # silencers: false         # no check that a .skip in a test carries its reason
+#         # project-ruff: false      # Python files are linted with the standard's default ruff, not the project's
 #
-# The base. A pull request is compared with the first parent of the merge commit the job checks out: the base branch
-# as the pull request was merged with it (the pull request's base SHA when HEAD is not a merge commit). A push is
-# compared with the commit before the push. The step exports it as CODE_RULES_BASE. Mode changed needs it; with no
-# base (a schedule, a dispatch, a new branch or tag) mode changed checks every file.
+# A project with debt. There is no changed-files mode: it narrows `paths` to the directories that are clean, with the
+# reason beside it, and widens it as it pays the debt down.
 name: node-lint
 on:
   workflow_call:
     inputs:
       runs-on: {type: string, default: "ubuntu-latest", description: "a runner label, or a JSON list of labels (a self-hosted runner)"}
       node-version: {type: string, default: "22"}
-      format-check: {type: boolean, default: false, description: "also check prettier, in the same scope as mode"}
-      mode: {type: string, default: "all", description: "all: every file must be clean; changed: every file the change touches"}
+      format-check: {type: boolean, default: false, description: "also check prettier, on every file in paths"}
       paths: {type: string, default: "", description: "space-separated directories or files to check (default: every tracked file)"}
-      no-inline-config: {type: boolean, default: false, description: "run ESLint with --no-inline-config, and fail on each eslint-disable comment"}
-      silencers: {type: boolean, default: false, description: "each silencer needs its reason (python-lint.yml lists them); in a test file a .skip needs a comment above it and .only fails"}
+      no-inline-config: {type: boolean, default: true, description: "run ESLint with --no-inline-config, and fail on each eslint-disable comment"}
+      silencers: {type: boolean, default: true, description: "each silencer needs its reason (python-lint.yml lists them); in a test file a .skip needs a comment above it and .only fails"}
       working-directory: {type: string, default: "."}
       ruff-version: {type: string, default: "", description: "for a project that also tracks Python files: one ruff release, by its version number; it wins over the project's pin (default: project-ruff decides)"}
-      project-ruff: {type: boolean, default: false, description: "lint Python files with the ruff the project pins (python-lint.yml says where), and with the standard's default when it pins none"}
+      project-ruff: {type: boolean, default: true, description: "lint Python files with the ruff the project pins (python-lint.yml says where), and with the standard's default when it pins none; false: the standard's default"}
       standards-ref:
         type: string
         default: ""
@@ -54,7 +50,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       # The tools come from the commit this workflow file was called at, so a workflow and its tools never disagree.
-      # job.workflow_sha is that commit: what @v2 or @<sha> resolved to in a project, and the commit under test in
+      # job.workflow_sha is that commit: what @v3 or @<sha> resolved to in a project, and the commit under test in
       # this repository's own ci.yml. It is read through toJSON because actionlint 1.7.12 does not know the property
       # yet. The checkout goes to the runner's temp directory, so nothing is added to the project's workspace.
       - name: The standards' tools, from the commit this workflow was called at
@@ -96,14 +92,10 @@ jobs:
       - name: ruff (the caller's version, the project's pin, or the standard's default)
         run: python3 "$RUNNER_TEMP/standards/tools/ruff_version.py" --install
       - run: npm ci
-      - name: Code rules (every file, or the files a change touches); ESLint, complexity, file size, prettier
+      - name: Code rules (every file); ESLint, complexity, silencers, file size, prettier
         env:
-          MODE: ${{ inputs.mode }}
           FORMAT_CHECK: ${{ inputs.format-check }}
           NO_INLINE_CONFIG: ${{ inputs.no-inline-config }}
           SILENCERS: ${{ inputs.silencers }}
           PATHS: ${{ inputs.paths }}
-          EVENT: ${{ github.event_name }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
         run: bash "$RUNNER_TEMP/standards/tools/steps/code-rules.sh" node

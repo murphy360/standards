@@ -191,7 +191,7 @@ def test_the_template_scans_in_its_checks_job_with_the_history():
     """The checks action runs the scan by default, so the job fetches the history."""
     text = (ROOT / "templates" / "ci.yml").read_text()
     job = text.split("\n  checks:\n", 1)[1].split("\n  test:\n", 1)[0]
-    assert "      - uses: murphy360/standards/actions/checks@v2\n" in job
+    assert "      - uses: murphy360/standards/actions/checks@v3\n" in job
     assert not re.search(r"^\s+checks:", job, re.MULTILINE)  # the default list
     assert "secret-scan" in run_checks.DEFAULT.split()
     assert re.search(r"^          fetch-depth: 0(\s|$)", job, re.MULTILINE)

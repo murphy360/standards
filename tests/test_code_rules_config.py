@@ -20,7 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOLS = ROOT / "tools"
 needs_ruff = pytest.mark.skipif(shutil.which("ruff") is None, reason="no ruff")
 BRANCHES = "".join(f"    if a == {i}:\n        return {i}\n" for i in range(17))
-# F401, and one function over both the complexity (C901) and the branch (PLR0912) limit
+# F401, and one function over the complexity limit (C901); 17 branches, and PLR0912,
+# the branch limit, is no standard rule since v3
 DIRTY = f"import os\n\n\ndef f(a):\n{BRANCHES}    return 0\n"
 IGNORE_FOR_EVERY_FILE = (
     '[lint.per-file-ignores]\n"*.py" = ["C901", "PLR0912", "F401"]\n'
@@ -43,12 +44,6 @@ rules = load("code_rules")
 config = rules.config
 
 
-@pytest.fixture(autouse=True)
-def outside_ci(monkeypatch):
-    for name in ("CI", "GITHUB_ACTIONS", "CODE_RULES_BASE"):
-        monkeypatch.delenv(name, raising=False)
-
-
 def git(root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=root, capture_output=True, text=True, check=True
@@ -63,14 +58,13 @@ def write(root: Path, files: dict):
 
 
 def repo(root: Path, files: dict) -> Path:
-    """A git repository holding ``files``, committed, and called origin/main."""
+    """A git repository holding ``files``, committed."""
     root.mkdir(parents=True, exist_ok=True)
     write(root, {"ruff.toml": "# ruff's defaults\n", **files})
     git(root, "init", "-q", "-b", "main")
     git(root, "config", "user.name", "Standards Tests")
     git(root, "config", "user.email", "tests@example.com")
     commit(root, "base")
-    git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
     return root
 
 
@@ -81,6 +75,14 @@ def commit(root: Path, message: str):
 
 def run(root: Path, *args: str) -> int:
     return rules.main(["--root", str(root), "--no-format", *args])
+
+
+def ruff_line() -> str:
+    """The first line of a run: the project's pin, and here it pins none."""
+    version = rules.ruff_version.default()
+    return (
+        f"code_rules: ruff {version} (the standard's default: the project pins no ruff)"
+    )
 
 
 # the sibling module
@@ -98,14 +100,15 @@ def test_the_tool_finds_the_module_beside_it_however_it_is_started(tmp_path):
         text=True,
     )
     assert res.returncode == 0, res.stderr
-    assert "--no-inline-config" in res.stdout
+    assert "--inline-config" in res.stdout and "--no-silencers" in res.stdout
 
 
 def test_the_second_run_holds_the_standard_rules_alone():
     assert config.STANDARD[0] == "--extend-select"
     alone = config.STANDARD_ALONE
-    assert alone[:2] == ["--select", "E,W,F,C901,PLR0912,PLR0915"]
-    assert alone[2:8] == config.STANDARD[2:]  # the same three limits
+    assert alone[:2] == ["--select", "F,E4,E7,E9,B,UP,SIM,I,C901,PLR0915"]
+    assert alone[2:6] == config.STANDARD[2:]  # the same two limits
+    assert alone[6:8] == ["--ignore", "B008"]
     assert alone[8:] == [
         "--config",
         "lint.per-file-ignores={}",
@@ -119,19 +122,20 @@ def test_the_second_run_holds_the_standard_rules_alone():
 
 @needs_ruff
 def test_a_per_file_ignore_cannot_switch_a_standard_rule_off(tmp_path, capsys):
-    """The ticket's first config: every file ignores three standard rules."""
+    """The ticket's first config: every file ignores two standard rules (and
+    PLR0912, which is the project's own to ignore)."""
     root = repo(tmp_path, {"ruff.toml": IGNORE_FOR_EVERY_FILE, "src/a.py": DIRTY})
-    assert run(root, "--all") == 1
+    assert run(root) == 1
     out = capsys.readouterr().out
-    assert "all: src/a.py: 3 ruff finding(s) (C901 1, F401 1, PLR0912 1)" in out
+    assert "all: src/a.py: 2 ruff finding(s) (C901 1, F401 1)" in out
     assert (
         "  src/a.py:1:8: F401 `os` imported but unused. Fix: remove the import" in out
     )
     assert "  src/a.py:4:5: C901 `f` is too complex (18 > 15)" in out
-    assert "  src/a.py:4:5: PLR0912 Too many branches (17 > 15)" in out
-    assert out.count(f"a per-file ignore (or `lint.exclude`) {CANNOT}") == 3
+    assert "PLR0912" not in out
+    assert out.count(f"a per-file ignore (or `lint.exclude`) {CANNOT}") == 2
     assert (
-        "code_rules: FAILED, 1 problem(s) (left in the repository: 3 finding(s)" in out
+        "code_rules: FAILED, 1 problem(s) (left in the repository: 2 finding(s)" in out
     )
 
 
@@ -141,16 +145,16 @@ def test_the_deprecated_top_level_per_file_ignores_is_emptied_too(tmp_path, caps
         tmp_path,
         {"ruff.toml": '[per-file-ignores]\n"*.py" = ["F"]\n', "src/a.py": DIRTY},
     )
-    assert run(root, "--all") == 1
-    assert "all: src/a.py: 3 ruff finding(s)" in capsys.readouterr().out
+    assert run(root) == 1
+    assert "all: src/a.py: 2 ruff finding(s)" in capsys.readouterr().out
 
 
 @needs_ruff
 def test_a_per_file_ignore_in_a_directorys_own_config_hides_nothing(tmp_path, capsys):
     """ruff reads the nearest config: the second run empties the option in each."""
     root = repo(tmp_path, {"src/ruff.toml": IGNORE_FOR_EVERY_FILE, "src/a.py": DIRTY})
-    assert run(root, "--all") == 1
-    assert "all: src/a.py: 3 ruff finding(s)" in capsys.readouterr().out
+    assert run(root) == 1
+    assert "all: src/a.py: 2 ruff finding(s)" in capsys.readouterr().out
 
 
 @needs_ruff
@@ -159,9 +163,9 @@ def test_lint_exclude_cannot_switch_the_standard_rules_off(tmp_path, capsys):
     root = repo(
         tmp_path, {"ruff.toml": '[lint]\nexclude = ["a.py"]\n', "src/a.py": DIRTY}
     )
-    assert run(root, "--all") == 1
+    assert run(root) == 1
     out = capsys.readouterr().out
-    assert "all: src/a.py: 3 ruff finding(s) (C901 1, F401 1, PLR0912 1)" in out
+    assert "all: src/a.py: 2 ruff finding(s) (C901 1, F401 1)" in out
     assert CANNOT in out and "ruff does not check" not in out
 
 
@@ -179,21 +183,21 @@ def test_a_per_file_ignore_for_a_rule_that_is_not_the_standards_still_works(
     )
     files = {"scripts/run.py": 'print("run")\n', "src/b.py": 'print("b")\n'}
     root = repo(tmp_path, {"ruff.toml": own_rule, **files})
-    assert run(root, "--all") == 1
+    assert run(root) == 1
     out = capsys.readouterr().out
     assert "scripts/run.py" not in out
     assert "all: src/b.py: 1 ruff finding(s) (T201 1)" in out
     assert CANNOT not in out
     assert "left in the repository: 1 finding(s)" in out
     (root / "src" / "b.py").write_text('message = "b"\n')
-    assert run(root, "--all") == 0, capsys.readouterr().out
+    assert run(root) == 0, capsys.readouterr().out
 
 
 @needs_ruff
 def test_a_finding_both_runs_see_is_counted_once(tmp_path, capsys):
     """F401 with no per-file ignore: the first run reports it and so does the second."""
     root = repo(tmp_path, {"src/a.py": "import os\n"})
-    assert run(root, "--all") == 1
+    assert run(root) == 1
     out = capsys.readouterr().out
     assert "all: src/a.py: 1 ruff finding(s) (F401 1)" in out
     assert out.count("src/a.py:1:8: F401") == 1 and CANNOT not in out
@@ -217,25 +221,17 @@ def test_only_a_finding_the_first_run_missed_is_added():
     assert line == f"  a.py:4:1: C901 m. Fix: fix C901; {config.HIDDEN}"
 
 
-@needs_ruff
-def test_in_mode_changed_a_hidden_finding_fails_the_file_a_change_touches(
-    tmp_path, capsys
-):
-    files = {"src/a.py": DIRTY, "src/old.py": DIRTY}
-    root = repo(tmp_path, {"ruff.toml": IGNORE_FOR_EVERY_FILE, **files})
-    (root / "src" / "a.py").write_text(DIRTY + "x = 1\n")
-    commit(root, "touch one of the two")
-    assert run(root) == 1
-    out = capsys.readouterr().out
-    assert "changed: src/a.py: 3 ruff finding(s) (C901 1, F401 1, PLR0912 1)" in out
-    assert "old.py" not in out and "6 finding(s)" in out
-
-
 # ruff: extend-per-file-ignores, which the command line cannot empty
 
 
-COVERS = "ALL E E501 W W291 F F4 F401 C C9 C90 C901 PL PLR PLR09 PLR0912 PLR0915"
-OWN = "B B006 EM ERA001 EXE FA FBT FURB C4 C408 PLC PLR0913 PLR2004 PLW T201 D UP"
+COVERS = (
+    "ALL E E4 E7 E711 E9 F F4 F401 B B0 B006 B9 B905 UP UP045 SIM SIM102 I I001 "
+    "C C9 C90 C901 PL PLR PLR09 PLR0915"
+)
+OWN = (
+    "E501 E5 W W291 B008 BLE EM ERA001 EXE FA FBT FURB S S101 ICN C4 C408 PLC "
+    "PLR0912 PLR0913 PLR2004 PLW T201 D"
+)
 
 
 @pytest.mark.parametrize("selector", COVERS.split())
@@ -273,7 +269,7 @@ def test_every_config_ruff_reads_is_read(tmp_path):
         {
             "project/pyproject.toml": '[tool.ruff]\nextend = "../shared/base.toml"\n'
             '[tool.ruff.lint.extend-per-file-ignores]\n"a.py" = ["C901"]\n',
-            "shared/base.toml": '[extend-per-file-ignores]\n"b.py" = ["W"]\n',
+            "shared/base.toml": '[extend-per-file-ignores]\n"b.py" = ["B"]\n',
             "project/pkg/.ruff.toml": "[lint.extend-per-file-ignores]\n"
             '"c.py" = ["PLR0915"]\n',
             # .ruff.toml wins in pkg, and nothing under other/ is a Python file
@@ -289,7 +285,7 @@ def test_every_config_ruff_reads_is_read(tmp_path):
         "ruff-config: pkg/.ruff.toml: `extend-per-file-ignores` names PLR0915 for "
         "`c.py`",
         "ruff-config: pyproject.toml: `extend-per-file-ignores` names C901 for `a.py`",
-        "ruff-config: ../shared/base.toml: `extend-per-file-ignores` names W for "
+        "ruff-config: ../shared/base.toml: `extend-per-file-ignores` names B for "
         "`b.py`",
     ]
 
@@ -330,20 +326,12 @@ def test_before_python_3_11_the_run_says_the_config_was_not_read(tmp_path, monke
 def test_an_extend_per_file_ignore_fails_the_run(tmp_path, capsys):
     hidden = '[lint.extend-per-file-ignores]\n"*.py" = ["F401"]\n'
     root = repo(tmp_path, {"ruff.toml": hidden, "src/a.py": "import os\n"})
-    assert run(root, "--all") == 1
+    assert run(root) == 1
     out = capsys.readouterr().out
     assert (
         "ruff-config: ruff.toml: `extend-per-file-ignores` names F401 for `*.py`" in out
     )
     assert "code_rules: FAILED, 1 problem(s)" in out
-    # mode changed: a problem of the config's is reported when a change touches it
-    (root / "src" / "a.py").write_text("import os\n\nx = 1\n")
-    commit(root, "touch the file, not the config")
-    assert run(root) == 0, capsys.readouterr().out
-    (root / "ruff.toml").write_text(hidden + "# touched\n")
-    commit(root, "touch the config")
-    assert run(root) == 1
-    assert "ruff-config: ruff.toml: " in capsys.readouterr().out
 
 
 # ruff: a tracked file it does not check
@@ -360,16 +348,15 @@ def test_a_file_the_config_excludes_is_printed_and_counted(tmp_path, capsys):
             "pkg/ok.py": "x = 1\n",
         },
     )
-    assert run(root, "--all") == 0
+    assert run(root) == 0
     out = capsys.readouterr().out
     assert out.splitlines() == [
+        ruff_line(),
         "code_rules: note: ruff does not check src/a.py: the project's ruff config, "
         "ruff's default excludes or a .gitignore leaves it out",
         "code_rules: OK (left in the repository: 0 finding(s), 0 file(s) over the "
-        "size limit, 1 Python file(s) ruff does not check)",
+        "size limit, 1 Python file(s) ruff does not check, 0 silencer(s))",
     ]
-    assert run(root) == 0  # mode changed says it as well: on every run
-    assert "ruff does not check src/a.py" in capsys.readouterr().out
 
 
 @needs_ruff
@@ -388,19 +375,20 @@ def test_ruffs_default_excludes_and_a_gitignore_are_not_silent_either(tmp_path, 
         "dist/built.py",
         "local.py",
     ]
-    assert run(root, "--all") == 0
+    assert run(root) == 0
     assert "2 Python file(s) ruff does not check" in capsys.readouterr().out
-    assert run(root, "--all", "--paths", "pkg") == 0  # only the files in --paths
+    assert run(root, "--paths", "pkg") == 0  # only the files in --paths
     assert "ruff does not check" not in capsys.readouterr().out
 
 
 @needs_ruff
 def test_a_run_that_checks_every_file_says_nothing_new(tmp_path, capsys):
     root = repo(tmp_path, {"pkg/ok.py": "x = 1\n"})
-    assert run(root, "--all") == 0
+    assert run(root) == 0
     assert capsys.readouterr().out == (
+        f"{ruff_line()}\n"
         "code_rules: OK (left in the repository: 0 finding(s), 0 file(s) over the "
-        "size limit)\n"
+        "size limit, 0 silencer(s))\n"
     )
 
 
@@ -408,11 +396,11 @@ def test_no_python_file_means_ruff_is_not_asked(tmp_path, capsys, monkeypatch):
     root = repo(tmp_path, {"src/a.ts": "export const a = 1;\n"})
     monkeypatch.setattr(rules, "ruff_cmd", lambda: pytest.fail("asked ruff"))
     assert config.unchecked(root, ["src/a.ts"], ["no-such-ruff"]) == []
-    assert run(root, "--all") == 0
+    assert run(root) == 0
     assert "ruff does not check" not in capsys.readouterr().out
 
 
-# ESLint: --no-inline-config and the eslint-disable comment
+# ESLint: --no-inline-config (the default since v3) and the eslint-disable comment
 
 
 def eslint_json(root: Path, rel: str, *messages: dict) -> str:
@@ -448,7 +436,7 @@ def test_a_disable_comment_over_a_real_finding_both_are_reported(tmp_path, capsy
     comment (made up here, as ESLint prints it), and the comment is a problem."""
     root = repo(tmp_path, {"src/a.ts": DISABLED, ".gitignore": "node_modules/\n"})
     args = fake_eslint(root, eslint_json(root, "src/a.ts", unused(2)))
-    assert run(root, "--eslint", "--all", "--no-inline-config") == 1
+    assert run(root, "--eslint") == 1
     out = capsys.readouterr().out
     assert "--no-inline-config" in args.read_text().split()
     assert "all: src/a.ts: 1 eslint finding(s) (no-unused-vars 1)" in out
@@ -462,28 +450,14 @@ def test_a_disable_comment_over_a_real_finding_both_are_reported(tmp_path, capsy
     )
 
 
-def test_without_the_option_eslint_runs_as_it_did(tmp_path, capsys):
+def test_inline_config_lets_eslint_run_as_it_did(tmp_path, capsys):
     """The default under v2: the comment still works, and nothing new is reported."""
     root = repo(tmp_path, {"src/a.ts": DISABLED, ".gitignore": "node_modules/\n"})
     args = fake_eslint(root)
-    assert run(root, "--eslint", "--all") == 0, capsys.readouterr().out
+    assert run(root, "--eslint", "--inline-config") == 0, capsys.readouterr().out
     assert "--no-inline-config" not in args.read_text()
     assert args.read_text().split()[:2] == ["--format", "json"]
     assert "eslint-disable" not in capsys.readouterr().out
-
-
-def test_in_mode_changed_a_disable_comment_fails_the_file_a_change_touches(
-    tmp_path, capsys, monkeypatch
-):
-    root = repo(tmp_path, {"src/a.ts": DISABLED, "src/old.ts": DISABLED})
-    (root / "src" / "a.ts").write_text(DISABLED + "export const a = 1;\n")
-    commit(root, "touch one of the two")
-    seen = []
-    monkeypatch.setattr(rules, "eslint_findings", lambda *a: seen.append(a[2:]) or [])
-    assert run(root, "--eslint", "--no-inline-config") == 1
-    out = capsys.readouterr().out
-    assert seen == [(["--no-inline-config"],)]
-    assert "eslint-disable: src/a.ts:1: " in out and "old.ts" not in out
 
 
 def test_every_form_of_the_disable_comment_is_found(tmp_path):
@@ -527,12 +501,15 @@ def test_vendored_code_is_not_scanned(tmp_path):
         "web/vendor/lib.js": "/* eslint-disable */\n",
     }
     root = repo(tmp_path, files)
-    a = rules.parse_args(["--eslint", "--no-inline-config"])
-    assert config.problems(root, set(files), a) == [
-        "eslint-disable: src/a.js:1: an `eslint-disable` comment is not allowed; "
-        "remove it and fix the finding it hid"
-    ]
-    assert config.problems(root, set(files), rules.parse_args(["--eslint"])) == []
+    for flags in (["--eslint"], ["--eslint", "--no-inline-config"]):  # v2's flag too
+        assert config.problems(root, set(files), rules.parse_args(flags)) == [
+            "eslint-disable: src/a.js:1: an `eslint-disable` comment is not allowed; "
+            "remove it and fix the finding it hid"
+        ]
+    a = rules.parse_args(["--eslint", "--inline-config"])
+    assert config.problems(root, set(files), a) == []
+    # python-lint runs no ESLint, so it reads no disable comment
+    assert config.problems(root, set(files), rules.parse_args([])) == []
 
 
 # node-lint.yml
@@ -546,21 +523,19 @@ def node_lint() -> str:
 STEP = ROOT / "tools" / "steps" / "code-rules.sh"
 
 
-def test_node_lint_takes_no_inline_config_and_it_is_off_by_default():
+def test_node_lint_takes_no_inline_config_and_it_is_on_by_default():
     text = node_lint()
-    assert (
-        "      no-inline-config: {type: boolean, default: false, description:" in text
-    )
+    assert "      no-inline-config: {type: boolean, default: true, description:" in text
     assert "          NO_INLINE_CONFIG: ${{ inputs.no-inline-config }}\n" in text
     assert text.endswith('tools/steps/code-rules.sh" node\n')
-    assert '[ "$NO_INLINE_CONFIG" != true ] || args+=(--no-inline-config)' in (
+    assert '[ "$NO_INLINE_CONFIG" != false ] || args+=(--inline-config)' in (
         STEP.read_text()
     )
     python_lint = (ROOT / ".github" / "workflows" / "python-lint.yml").read_text()
     assert "strict-config" not in text + python_lint  # the ruff part is simply on
 
 
-@pytest.mark.parametrize("given, fails", [("true", True), ("false", False)])
+@pytest.mark.parametrize("given, fails", [("true", True), ("", True), ("false", False)])
 def test_the_node_lint_step_passes_the_option_to_the_tool(tmp_path, given, fails):
     """The step's own script, on a project whose ESLint is a script: no Node."""
     root = repo(tmp_path / "project", {"src/a.ts": DISABLED})
@@ -570,14 +545,9 @@ def test_the_node_lint_step_passes_the_option_to_the_tool(tmp_path, given, fails
     env = {
         "PATH": os.environ["PATH"],
         "HOME": str(tmp_path),
-        "CI": "true",
-        "MODE": "all",
         "FORMAT_CHECK": "false",
         "NO_INLINE_CONFIG": given,
         "PATHS": "",
-        "EVENT": "schedule",
-        "PR_BASE": "",
-        "BEFORE": "",
     }
     res = subprocess.run(
         ["bash", str(STEP), "node"],

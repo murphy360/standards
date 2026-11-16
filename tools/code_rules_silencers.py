@@ -2,7 +2,8 @@
 
 ``code_rules.py`` imports this module. A silencer reaches a green run without fixing
 anything. ``# noqa`` is not allowed at all (``noqa_comments``, on every run). The
-others are allowed with a reason, and ``--silencers`` checks that each has one:
+others are allowed with a reason, and every run checks that each has one
+(``--no-silencers`` leaves it out):
 
 * **a pytest skip or xfail**: ``pytest.mark.skip``, ``skipif`` and ``xfail`` need a
   ``reason=``. A condition says when, not why, so ``skipif`` and ``xfail`` need it
@@ -36,6 +37,7 @@ switches off. Standard library only.
 
 from __future__ import annotations
 
+import argparse
 import ast
 import re
 import tokenize
@@ -322,6 +324,13 @@ def scan(root: Path, files: list[str]) -> list[tuple[str, int, str, str | None]]
             found = sorted(file_silencers(rel, path), key=lambda f: f[0])
             out += [(rel, *f) for f in found]
     return out
+
+
+def add_arguments(ap: argparse.ArgumentParser) -> None:
+    """``--silencers``, on by default, and ``--no-silencers``."""
+    ap.add_argument(
+        "--silencers", action=argparse.BooleanOptionalAction, default=True, help=HELP
+    )
 
 
 def measure(root: Path, tracked: set[str], a) -> tuple[list[str], int | None]:

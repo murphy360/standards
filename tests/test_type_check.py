@@ -618,7 +618,7 @@ def test_the_node_fixture_has_a_tsconfig_for_its_source():
 
 def test_the_ci_template_shows_the_job_commented_out():
     text = (ROOT / "templates" / "ci.yml").read_text()
-    job = "  #   uses: murphy360/standards/.github/workflows/type-check.yml@v2\n"
+    job = "  #   uses: murphy360/standards/.github/workflows/type-check.yml@v3\n"
     assert "  # types:\n" + job in text
     assert "  #     install-command: " in text
     live = [line for line in text.splitlines() if not line.lstrip().startswith("#")]

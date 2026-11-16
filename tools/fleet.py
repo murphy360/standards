@@ -3,17 +3,18 @@
 
     python3 fleet.py                       # one table, one row per repository
     python3 fleet.py --json                # the same, for a program to read
-    python3 fleet.py --run-tools v2.3.0    # the rehearsal before a release
+    python3 fleet.py --run-tools v3.0.0    # the rehearsal before a release
 
 It lists the owner's repositories that are not archived. For each one it prints:
 
 * the ``murphy360/standards`` workflows it calls, and at which ref: the current
-  major tag (``v2``), an older major, or a commit SHA (shown by its first seven
+  major tag (``v3``), an older major, or a commit SHA (shown by its first seven
   characters). A repository that runs the checks in one job, through the
   ``checks`` action, has that ref under ``checks`` and under each check the step
   names, so ``python-lint`` reads the same for both ways of calling it;
 * the lint mode (``all`` or ``changed``) and whether a caller passes
-  ``format-only``;
+  ``format-only``: v2 inputs that v3 removed, so each must read ``all`` and ``no``
+  before a repository moves to v3;
 * which templates it has: the instruction file by its name (``AGENTS.md``,
   ``CLAUDE.md``, or ``both``), ``.github/dependabot.yml``,
   ``.pre-commit-config.yaml``, ``.github/pull_request_template.md``, and a CI job
@@ -28,7 +29,7 @@ SHA, adopters with the one ``checks`` job, and repositories outside the standard
 without the topic.
 
 ``--run-tools <ref>`` is the rehearsal before a release (fleet_rehearsal.py). It
-clones each adopter, runs ``code_rules.py --all`` and ``check_standards.py`` from
+clones each adopter, runs ``code_rules.py`` and ``check_standards.py`` from
 this checkout at ``<ref>`` against it, and prints pass or fail per repository.
 
 The report is printed and never written to a file. This repository is public and
@@ -45,7 +46,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import fleet_rehearsal
@@ -63,8 +64,7 @@ PAGE = 10
 
 # One page of the owner's repositories, with everything a row needs. The files are
 # read at the default branch (HEAD).
-QUERY = (
-    """
+QUERY = """
 query($owner: String!, $cursor: String) {
   repositoryOwner(login: $owner) {
     repositories(first: %d, after: $cursor, ownerAffiliations: OWNER,
@@ -89,9 +89,7 @@ query($owner: String!, $cursor: String) {
     }
   }
 }
-"""
-    % PAGE
-)
+""".replace("%d", str(PAGE))
 
 KEY_RE = re.compile(r"^( *)([\w.-]+|\"[^\"]+\"|'[^']+') *:(?: +(.*))?$")
 USES_RE = re.compile(r"^([^\s\"'#]+)[\"']?\s*(?:#\s*(\S+))?")
@@ -409,7 +407,9 @@ def gh_graphql(query: str, variables: dict[str, str | None]) -> dict:
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as e:
-        raise FleetError(f"`gh` did not run ({e}); install it and `gh auth login`")
+        raise FleetError(
+            f"`gh` did not run ({e}); install it and `gh auth login`"
+        ) from e
     try:
         answer = json.loads(res.stdout)
     except ValueError:
@@ -517,9 +517,11 @@ def template_cell(row: dict, template: str) -> str:
 
 def aligned(lines: list[list[str]]) -> list[str]:
     """Rows of cells as text, each column as wide as its widest cell."""
-    widths = [max(len(cell) for cell in column) for column in zip(*lines)]
+    widths = [max(len(cell) for cell in column) for column in zip(*lines, strict=True)]
     return [
-        "  ".join(cell.ljust(width) for cell, width in zip(line, widths)).rstrip()
+        "  ".join(
+            cell.ljust(width) for cell, width in zip(line, widths, strict=True)
+        ).rstrip()
         for line in lines
     ]
 
@@ -550,12 +552,7 @@ def table(rows: list[dict]) -> list[str]:
 
 def default_major() -> int:
     """The current major: the one this checkout's pyproject.toml names."""
-    try:
-        text = (ROOT / "pyproject.toml").read_text()
-    except OSError:
-        return 2
-    m = re.search(r'^version\s*=\s*"(\d+)\.', text, re.MULTILINE)
-    return int(m.group(1)) if m else 2
+    return fleet_rehearsal.major_of(ROOT)
 
 
 def default_owner() -> str:
@@ -601,7 +598,7 @@ def parse_args(argv) -> argparse.Namespace:
 
 def main(argv=None, *, fetch=gh_graphql, now: datetime | None = None) -> int:
     args = parse_args(argv)
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     try:
         owner = args.owner or default_owner()
         rows = report(list_repositories(owner, fetch), owner, args.major, now)

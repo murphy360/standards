@@ -1,14 +1,13 @@
 """The standards' tools on scratch repositories: the code rules and the standards check.
 
-The code rules have no baseline: ``--all`` checks that every file is clean, and
-without it every file a branch changes must be clean. A finding is printed with its
-line, rule and fix; a ``# noqa`` hides nothing and is a problem itself. The parts that
-run ruff are skipped where ruff is not installed.
+The code rules have no baseline and no changed-files mode: every run checks that every
+file is clean. A finding is printed with its line, rule and fix; a ``# noqa`` hides
+nothing and is a problem itself. The parts that run ruff are skipped where ruff is not
+installed.
 """
 
 import importlib.util
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -19,7 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS = ROOT / "tools"
 needs_ruff = pytest.mark.skipif(shutil.which("ruff") is None, reason="no ruff")
-LONG = "x = 1  # " + " ".join(["a long comment"] * 7) + "\n"  # one E501 at 88
+DIRTY = "def f(x=[]):\n    return x\n"  # one B006, a mutable default, at 1:9
 
 
 def load(name):
@@ -30,13 +29,6 @@ def load(name):
 
 
 rules, standards = load("code_rules"), load("check_standards")
-
-
-@pytest.fixture(autouse=True)
-def outside_ci(monkeypatch):
-    """Each test says itself whether it runs in CI and against which base."""
-    for name in ("CI", "GITHUB_ACTIONS", "CODE_RULES_BASE"):
-        monkeypatch.delenv(name, raising=False)
 
 
 def git(root: Path, *args: str) -> str:
@@ -67,16 +59,10 @@ def commit(root: Path, message: str = "a change"):
     git(root, "commit", "-q", "-m", message)
 
 
-def commit_base(root: Path, message: str = "base"):
-    """Commit everything and call it origin/main."""
-    commit(root, message)
-    git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
-
-
 def dirty_base(tmp_path) -> Path:
-    """A repository whose main has one file with a finding and one without."""
-    root = repo(tmp_path, {"pkg/dirty.py": LONG, "pkg/clean.py": 'message = "ok"\n'})
-    commit_base(root, "a finding nobody has touched")
+    """A repository with one file with a finding and one without."""
+    root = repo(tmp_path, {"pkg/dirty.py": DIRTY, "pkg/clean.py": 'message = "ok"\n'})
+    commit(root, "a finding")
     return root
 
 
@@ -111,45 +97,44 @@ def test_there_is_no_baseline_and_no_update(capsys):
     assert "unrecognized arguments: --update" in capsys.readouterr().err
 
 
-def test_all_and_format_only_are_two_different_checks(capsys):
+def test_the_migration_machinery_is_gone(capsys):
+    """v3: no changed-files mode, no base, no format-only proof, no baseline note."""
+    for name in ("changed_files", "base_ref", "format_only_problems", "syntax_tree"):
+        assert not hasattr(rules, name), name
+    assert "OLD_BASELINE" not in vars(rules) and "BASE_ENV" not in vars(rules)
     with pytest.raises(SystemExit):
-        rules.main(["--all", "--format-only"])
-    assert "two different checks" in capsys.readouterr().err
+        rules.main(["--format-only"])
+    assert "unrecognized arguments: --format-only" in capsys.readouterr().err
 
 
-# the changed-file rule
+def test_v2s_all_is_accepted_and_changes_nothing(capsys):
+    """A v2 hook passes `--all`: it still parses, and is not in the help."""
+    assert rules.parse_args(["--all"]).paths == rules.parse_args([]).paths
+    with pytest.raises(SystemExit):
+        rules.main(["--help"])
+    assert "--all" not in capsys.readouterr().out
+
+
+# every file
 
 
 @needs_ruff
-def test_a_changed_file_with_a_finding_fails(tmp_path, capsys):
+def test_a_file_with_a_finding_fails_whoever_changed_it(tmp_path, capsys):
     root = dirty_base(tmp_path)
-    write(root, {"pkg/dirty.py": LONG + 'z = "touched"\n'})
-    commit(root, "touch the dirty file")
     assert run(root) == 1
-    assert "changed: pkg/dirty.py: 1 ruff finding(s) (E501 1)" in (
-        capsys.readouterr().out
-    )
-
-
-@needs_ruff
-def test_a_file_nobody_changed_keeps_its_finding(tmp_path, capsys):
-    root = dirty_base(tmp_path)
-    write(root, {"pkg/clean.py": 'message = "changed"\n'})
-    commit(root, "touch only the clean file")
-    assert run(root) == 0, capsys.readouterr().out
     out = capsys.readouterr().out
-    assert "1 changed file(s) checked" in out
-    assert "code_rules: OK (left in the repository: 1 finding(s), 0 file(s)" in out
+    assert "all: pkg/dirty.py: 1 ruff finding(s) (B006 1)" in out
+    assert "pkg/clean.py" not in out
 
 
 @needs_ruff
 def test_a_change_not_committed_yet_is_checked(tmp_path, capsys):
     """A local run sees the working tree, before the commit."""
-    root = dirty_base(tmp_path)
-    write(root, {"pkg/dirty.py": LONG + 'z = "touched"\n'})
-    assert rules.changed_files(root) == (["pkg/dirty.py"], None)
+    root = repo(tmp_path, {"pkg/clean.py": 'message = "ok"\n'})
+    commit(root)
+    write(root, {"pkg/clean.py": DIRTY})
     assert run(root) == 1
-    assert "changed: pkg/dirty.py" in capsys.readouterr().out
+    assert "all: pkg/clean.py: 1 ruff finding(s)" in capsys.readouterr().out
 
 
 @needs_ruff
@@ -163,191 +148,48 @@ def test_a_fixed_file_passes_with_nothing_else_to_update(tmp_path, capsys):
 
 
 @needs_ruff
-def test_a_changed_file_over_the_size_limit_fails(tmp_path, capsys):
-    big = "".join(f"v{i} = {i}\n" for i in range(900))
-    root = repo(tmp_path, {"pkg/big.py": big})
-    commit_base(root, "a large file")
-    write(root, {"pkg/big.py": big.replace("v0 = 0", "v0 = 1")})
-    commit(root, "touch the large file")
-    assert run(root) == 1
-    assert "changed: pkg/big.py: 900 lines, over its limit 800" in (
-        capsys.readouterr().out
-    )
-
-
-@needs_ruff
-def test_a_changed_python_file_must_be_formatted(tmp_path, capsys):
-    root = repo(tmp_path, {"pkg/existing.py": 'message = "ok"\n'})
-    commit_base(root)
-    write(root, {"pkg/new.py": "message = 'needs formatting'\n"})
-    commit(root, "add a file")
-    assert run(root) == 1
-    assert "ruff-format: pkg/new.py: fails `ruff format --check`" in (
-        capsys.readouterr().out
-    )
-    assert run(root, "--no-format") == 0  # a project not re-formatted yet
-    assert "file(s) not formatted" not in capsys.readouterr().out
-
-
-@needs_ruff
-def test_a_renamed_file_counts_as_changed(tmp_path, capsys):
-    root = dirty_base(tmp_path)
-    git(root, "mv", "pkg/dirty.py", "pkg/moved.py")
-    commit(root, "rename the dirty file, content unchanged")
-    assert rules.changed_files(root) == (["pkg/moved.py"], None)
-    assert run(root) == 1
-    assert "changed: pkg/moved.py: 1 ruff finding(s)" in capsys.readouterr().out
-
-
-@needs_ruff
 def test_a_file_name_git_would_quote_is_still_checked(tmp_path, capsys):
-    root = repo(tmp_path, {"pkg/clean.py": 'message = "ok"\n'})
-    commit_base(root)
-    write(root, {"pkg/café.py": LONG})
+    root = repo(tmp_path, {"pkg/café.py": DIRTY})
     commit(root, "a file whose name is not ASCII")
-    assert rules.changed_files(root) == (["pkg/café.py"], None)
     assert run(root) == 1
-    assert "changed: pkg/café.py: 1 ruff finding(s)" in capsys.readouterr().out
-
-
-@needs_ruff
-def test_a_deleted_file_is_not_checked(tmp_path, capsys):
-    root = dirty_base(tmp_path)
-    git(root, "rm", "-q", "pkg/dirty.py")
-    commit(root, "delete the dirty file")
-    assert rules.changed_files(root) == ([], None)
-    assert run(root) == 0, capsys.readouterr().out
-    assert "left in the repository: 0 finding(s)" in capsys.readouterr().out
-
-
-@needs_ruff
-def test_a_changed_file_is_found_without_a_merge_base(tmp_path, capsys):
-    """A shallow CI checkout: the base shares no history with HEAD.
-
-    The trees are compared instead.
-    """
-    root = repo(tmp_path, {"pkg/existing.py": 'message = "ok"\n'})
-    commit(root, "base")
-    git(root, "checkout", "-q", "--orphan", "main-shallow")
-    commit(root, "main, fetched with depth 1")
-    git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
-    git(root, "checkout", "-q", "main")
-    write(root, {"pkg/new.py": LONG})
-    commit(root, "add a file")
-    assert rules.changed_files(root) == (["pkg/new.py"], None)
-    assert run(root) == 1
-    assert "changed: pkg/new.py: 1 ruff finding(s)" in capsys.readouterr().out
+    assert "all: pkg/café.py: 1 ruff finding(s)" in capsys.readouterr().out
 
 
 @needs_ruff
 def test_a_project_in_a_subdirectory_sees_its_own_paths(tmp_path, capsys):
     """The workflow's working-directory: paths are relative to it."""
-    root = repo(tmp_path, {"app/pkg/dirty.py": LONG, "other/x.py": LONG})
-    commit_base(root)
-    write(root, {"app/pkg/dirty.py": LONG + "y = 2\n", "other/x.py": LONG + "y = 2\n"})
-    commit(root, "touch both")
-    assert rules.changed_files(root / "app") == (["pkg/dirty.py"], None)
+    root = repo(tmp_path, {"app/pkg/dirty.py": DIRTY, "other/x.py": DIRTY})
+    commit(root)
     assert run(root / "app") == 1
     out = capsys.readouterr().out
-    assert "changed: pkg/dirty.py: 1 ruff finding(s)" in out and "other" not in out
+    assert "all: pkg/dirty.py: 1 ruff finding(s)" in out and "other" not in out
 
 
 @needs_ruff
 def test_an_untracked_checkout_beside_the_project_is_not_counted(tmp_path, capsys):
     """A workflow pinned before the tools left the workspace still puts them there."""
     root = repo(tmp_path, {"pkg/clean.py": 'message = "ok"\n'})
-    commit_base(root)
-    write(root, {".standards/tools/dirty.py": LONG})
-    assert run(root, "--all") == 0, capsys.readouterr().out
+    commit(root)
+    write(root, {".standards/tools/dirty.py": DIRTY})
+    assert run(root) == 0, capsys.readouterr().out
     assert "left in the repository: 0 finding(s)" in capsys.readouterr().out
 
 
-# the base
-
-
 @needs_ruff
-def test_outside_ci_a_missing_base_is_a_note(tmp_path, capsys):
-    root = repo(tmp_path, {"pkg/new.py": LONG})
-    commit(root, "a file, and no origin/main")
-    assert run(root) == 0
-    out = capsys.readouterr().out
-    assert "skipped the changed-file checks because `origin/main` is not" in out
-    assert "changed: pkg/new.py" not in out
-
-
-@needs_ruff
-@pytest.mark.parametrize("name", ["CI", "GITHUB_ACTIONS"])
-def test_in_ci_a_missing_base_fails_and_says_how_to_fetch_it(
-    tmp_path, capsys, monkeypatch, name
-):
-    """Without a base nothing would be checked: in CI that is a failure."""
-    root = repo(tmp_path, {"pkg/clean.py": 'message = "ok"\n'})
-    commit(root, "a clean file, and no origin/main")
-    monkeypatch.setenv(name, "true")
-    assert run(root) == 1
-    out = capsys.readouterr().out
-    assert "base: cannot tell what this branch changed" in out
-    assert (
-        "git fetch --no-tags --depth=1 origin "
-        "+refs/heads/main:refs/remotes/origin/main" in out
-    )
-    assert "CODE_RULES_BASE" in out
-
-
-@needs_ruff
-def test_the_base_may_be_a_commit_named_in_the_environment(
-    tmp_path, capsys, monkeypatch
-):
-    """A push is compared with the commit before it."""
-    root = dirty_base(tmp_path)
-    before = git(root, "rev-parse", "HEAD").strip()
-    git(root, "update-ref", "-d", "refs/remotes/origin/main")
-    write(root, {"pkg/dirty.py": LONG + 'z = "touched"\n'})
-    commit(root, "touch the dirty file")
-    monkeypatch.setenv("CI", "true")
-    monkeypatch.setenv("CODE_RULES_BASE", before)
-    assert run(root) == 1
-    assert "changed: pkg/dirty.py: 1 ruff finding(s)" in capsys.readouterr().out
-    monkeypatch.setenv("CODE_RULES_BASE", "0" * 40)  # a commit that is not here
-    assert run(root) == 1
-    out = capsys.readouterr().out
-    assert f"`{'0' * 40}` is not available" in out
-    assert f"git fetch --no-tags --depth=1 origin {'0' * 40}" in out
-
-
-@needs_ruff
-def test_an_old_baseline_file_is_ignored_with_a_note(tmp_path, capsys):
-    baseline = {"ruff": {"pkg/dirty.py::E501": 1}, "lines": {}}
-    root = dirty_base(tmp_path)
-    write(root, {"code_rules_baseline.json": json.dumps(baseline)})
-    commit_base(root, "the ratchet's baseline, from before")
-    write(root, {"pkg/dirty.py": LONG + 'z = "touched"\n'})
-    commit(root, "touch the dirty file the baseline listed")
-    assert run(root) == 1  # the baseline no longer excuses it
-    out = capsys.readouterr().out
-    assert "changed: pkg/dirty.py: 1 ruff finding(s)" in out
-    assert out.count("code_rules_baseline.json is no longer read") == 1
-    assert "delete it" in out
-
-
-# --all
-
-
-@needs_ruff
-def test_all_lists_every_file_that_is_not_clean(tmp_path, capsys):
+def test_every_file_that_is_not_clean_is_listed(tmp_path, capsys):
     root = dirty_base(tmp_path)
     write(root, {"pkg/big.py": "x = 1\n" * 801, "pkg/ugly.py": "message = 'q'\n"})
-    commit_base(root, "three files out of standard, none changed by a branch")
-    assert run(root) == 0  # nothing changed: nothing to check
-    capsys.readouterr()
-    assert run(root, "--all") == 1
+    commit(root, "three files out of standard")
+    assert run(root) == 1
     out = capsys.readouterr().out
-    assert "all: pkg/dirty.py: 1 ruff finding(s) (E501 1)" in out
+    assert "all: pkg/dirty.py: 1 ruff finding(s) (B006 1)" in out
     assert "all: pkg/big.py: 801 lines, over its limit 800" in out
     assert "all: pkg/ugly.py: fails `ruff format --check`" in out
     assert "pkg/clean.py" not in out
     assert "code_rules: FAILED, 3 problem(s)" in out
     assert "1 finding(s), 1 file(s) over the size limit, 1 file(s) not formatted" in out
+    assert run(root, "--no-format") == 1  # a project not re-formatted yet
+    assert "file(s) not formatted" not in capsys.readouterr().out
 
 
 @needs_ruff
@@ -355,419 +197,198 @@ def test_there_is_no_report_only_flag_a_finding_always_fails(tmp_path, capsys):
     """No flag lets a finding pass: --report-only is gone."""
     root = dirty_base(tmp_path)
     with pytest.raises(SystemExit) as refused:
-        run(root, "--all", "--report-only")
+        run(root, "--report-only")
     assert refused.value.code == 2
-    assert run(root, "--all") == 1
+    assert run(root) == 1
     assert "code_rules: FAILED, 1 problem(s)" in capsys.readouterr().out
 
 
 @needs_ruff
 def test_paths_limit_every_check_to_those_directories(tmp_path, capsys):
+    """How a project with debt adopts: it narrows paths to the clean directories."""
     root = repo(
         tmp_path,
         {
             "src/pkg/clean.py": 'message = "ok"\n',
-            "scratch/dirty.py": LONG,
+            "scratch/dirty.py": DIRTY,
             "scratch/big.py": "x = 1\n" * 801,
         },
     )
-    commit_base(root)
-    assert run(root, "--all") == 1
+    commit(root)
+    assert run(root) == 1
     capsys.readouterr()
-    assert run(root, "--all", "--paths", "src") == 0
+    assert run(root, "--paths", "src") == 0
     assert "0 finding(s), 0 file(s) over the size limit" in capsys.readouterr().out
-    assert run(root, "--all", "--paths", "src", "scratch/dirty.py") == 1
+    assert run(root, "--paths", "src", "scratch/dirty.py") == 1
     out = capsys.readouterr().out
     assert "all: scratch/dirty.py: 1 ruff finding(s)" in out
     assert "scratch/big.py" not in out
 
 
 @needs_ruff
-def test_all_passes_on_a_clean_repository(tmp_path, capsys):
+def test_a_clean_repository_passes(tmp_path, capsys):
     root = repo(tmp_path, {"pkg/clean.py": 'message = "ok"\n'})
-    commit_base(root)
-    assert run(root, "--all") == 0
+    commit(root)
+    assert run(root) == 0
     assert (
         "code_rules: OK (left in the repository: 0 finding(s), 0 file(s) over the "
-        "size limit, 0 file(s) not formatted)"
+        "size limit, 0 file(s) not formatted, 0 silencer(s))"
     ) in capsys.readouterr().out
 
 
 @needs_ruff
 def test_a_file_that_does_not_parse_is_a_problem_not_a_crash(tmp_path, capsys):
-    root = repo(tmp_path, {"pkg/ok.py": 'message = "ok"\n'})
-    commit_base(root)
-    write(root, {"pkg/broken.py": "def f(:\n"})
+    root = repo(
+        tmp_path, {"pkg/ok.py": 'message = "ok"\n', "pkg/broken.py": "def f(:\n"}
+    )
     commit(root, "a file that does not parse")
     assert run(root) == 1
     out = capsys.readouterr().out
-    assert "ruff-format: pkg/broken.py" in out
-    assert "changed: pkg/broken.py" in out and "syntax" in out
+    assert "all: pkg/broken.py: fails `ruff format --check`" in out
+    assert "all: pkg/broken.py" in out and "syntax" in out
 
 
 @needs_ruff
 def test_this_repository_meets_its_own_rules(capsys):
     if not (ROOT / ".git").exists():
         pytest.skip("not a git checkout")
-    assert run(ROOT, "--all") == 0, capsys.readouterr().out
+    assert run(ROOT) == 0, capsys.readouterr().out
+
+
+# the rule set (#35)
+
+
+@needs_ruff
+def test_the_formatter_owns_the_layout_and_the_lint_looks_for_bugs(tmp_path, capsys):
+    """A long line is the formatter's (no E501, no W); B, UP, SIM and I are found."""
+    text = (
+        "import sys\nimport os\nfrom typing import Optional\n\n\n"  # I001: os first
+        "def pairs(a: list, b: list) -> list:\n"
+        "    return list(zip(a, b))  # " + "a long comment " * 6 + "\n"  # B905, no E501
+        "\n\n"
+        "def name(x: Optional[str], y: bool) -> str:\n"  # UP045
+        "    if x:\n        if y:\n            return x\n"  # SIM102
+        "    return os.sep + sys.prefix\n"
+    )
+    root = repo(tmp_path, {"pkg/mod.py": text})
+    commit(root)
+    assert run(root, "--no-format") == 1
+    out = capsys.readouterr().out
+    assert (
+        "all: pkg/mod.py: 4 ruff finding(s) (B905 1, I001 1, SIM102 1, UP045 1)" in out
+    )
+    assert "E501" not in out and "W291" not in out
+
+
+def test_the_standard_rules_are_the_owners_set():
+    assert rules.config.RULES == (
+        "F", "E4", "E7", "E9", "B", "UP", "SIM", "I", "C901", "PLR0915"
+    )  # fmt: skip
+    flags = " ".join(rules.config.STANDARD)
+    assert "PLR0912" not in flags and "E501" not in flags and ",W" not in flags
+    assert rules.config.LEAVE_OUT == ["--ignore", "B008"]
 
 
 # each finding with its line, rule and fix
 
 
 @needs_ruff
-def test_a_changed_files_finding_names_its_line_rule_and_fix(tmp_path, capsys):
+def test_a_finding_names_its_line_rule_and_fix(tmp_path, capsys):
     """The log alone says where the finding is and how to fix it."""
     root = dirty_base(tmp_path)
-    write(root, {"pkg/dirty.py": LONG + 'z = "touched"\n'})
-    commit(root, "touch the dirty file")
     assert run(root) == 1
     out = capsys.readouterr().out
-    assert "  pkg/dirty.py:1:89: E501 Line too long" in out
-    assert "Fix: wrap the line to the project's line length" in out
+    assert "  pkg/dirty.py:1:9: B006 Do not use mutable data structures" in out
+    assert "Fix: `ruff rule B006` explains the rule and its fix" in out
+    assert "pkg/clean.py" not in out
     assert "code_rules: FAILED, 1 problem(s)" in out
 
 
-@needs_ruff
-def test_all_names_each_finding_and_its_fix(tmp_path, capsys):
-    root = dirty_base(tmp_path)
-    assert run(root, "--all") == 1
-    out = capsys.readouterr().out
-    assert "  pkg/dirty.py:1:89: E501" in out
-    assert "pkg/clean.py" not in out
-
-
-@needs_ruff
-def test_a_file_nobody_changed_is_not_explained(tmp_path, capsys):
-    root = dirty_base(tmp_path)
-    write(root, {"pkg/clean.py": 'message = "changed"\n'})
-    commit(root, "touch only the clean file")
-    assert run(root) == 0
-    assert "Fix:" not in capsys.readouterr().out
-
-
 def test_each_kind_of_rule_has_a_fix():
-    assert "line length" in rules.fix_for("E501")
+    assert "E501" not in rules.FIXES  # no line length: the formatter's
     assert "__all__" in rules.fix_for("F401")
     assert "conftest.py" in rules.fix_for("F811")
     assert "allows none" in rules.fix_for("RUF100")
-    for code in ("C901", "PLR0912", "PLR0915"):
+    assert "strict=True" in rules.fix_for("B905") and "strict=False" in rules.fix_for(
+        "B905"
+    )
+    assert "from err" in rules.fix_for("B904")
+    assert "lambda x=x" in rules.fix_for("B023")
+    for code in ("C901", "PLR0915"):
         assert "named helpers" in rules.fix_for(code)
     assert rules.fix_for("B006") == "`ruff rule B006` explains the rule and its fix"
+    assert rules.fix_for("UP045", safe_fix=True) == "`ruff check --fix` fixes it"
+    assert rules.fix_for("I001", safe_fix=True) == "`ruff check --fix` fixes it"
 
 
 def test_at_most_fifty_findings_are_explained():
     found = [
-        {"rel": "a.py", "line": n, "col": 1, "code": "E501", "message": "long"}
+        {"rel": "a.py", "line": n, "col": 1, "code": "B006", "message": "default"}
         for n in range(1, 53)
     ]
     lines = rules.explained(found, {"a.py"})
     assert len(lines) == 51
-    assert lines[0].startswith("  a.py:1:1: E501 long. Fix: ")
+    assert lines[0].startswith("  a.py:1:1: B006 default. Fix: ")
     assert lines[-1] == "  ... and 2 more finding(s)"
     assert rules.explained(found, {"b.py"}) == []
 
 
 # no noqa: ruff runs with --ignore-noqa, and a noqa comment is a problem
 
-LONG_LITERAL = 'x = "' + "a" * 95 + '"'  # one E501 at 88
-
 
 @needs_ruff
 def test_a_used_noqa_hides_nothing_and_fails(tmp_path, capsys):
-    root = dirty_base(tmp_path)
-    write(root, {"pkg/clean.py": LONG_LITERAL + "  # noqa: E501\n"})
-    commit(root, "hide a long line")
+    root = repo(
+        tmp_path, {"pkg/clean.py": "def f(x=[]):  # noqa: B006\n    return x\n"}
+    )
+    commit(root, "hide a mutable default")
     assert run(root) == 1
     out = capsys.readouterr().out
-    assert "changed: pkg/clean.py: 1 ruff finding(s) (E501 1)" in out
-    assert "  pkg/clean.py:1:89: E501" in out
+    assert "all: pkg/clean.py: 1 ruff finding(s) (B006 1)" in out
+    assert "  pkg/clean.py:1:9: B006" in out
     assert "noqa: pkg/clean.py:1: a `# noqa` is not allowed" in out
 
 
 @needs_ruff
 def test_a_noqa_comment_fails_even_when_it_hides_nothing(tmp_path, capsys):
-    root = dirty_base(tmp_path)
-    write(root, {"pkg/clean.py": 'message = "ok"  # ruff: noqa\n'})
+    root = repo(tmp_path, {"pkg/clean.py": 'message = "ok"  # ruff: noqa\n'})
     commit(root, "an idle noqa")
     assert run(root) == 1
-    assert "noqa: pkg/clean.py:1:" in capsys.readouterr().out
-    assert run(root, "--all") == 1
     assert "noqa: pkg/clean.py:1:" in capsys.readouterr().out
 
 
 @needs_ruff
 def test_the_word_noqa_in_a_string_is_not_a_comment(tmp_path, capsys):
-    root = dirty_base(tmp_path)
     text = '"""A docstring that mentions # noqa."""\n\nmessage = "# noqa"\n'
-    write(root, {"pkg/clean.py": text})
+    root = repo(tmp_path, {"pkg/clean.py": text})
     commit(root, "only the text")
     assert run(root) == 0, capsys.readouterr().out
 
 
-# --format-only: a branch that re-formats files and does nothing else
-
-WIDE = (
-    "def area(width, height):\n"
-    "    '''The area.\n\n        Of a rectangle.\n    '''\n"
-    "    total = {'width': width, 'height': height, 'area': width * height, "
-    "'unit': 'm2'}\n"
-    "    del (width, height)\n"
-    "    return total\n"
-)
+# python-lint's code rules step: the shell python-lint.yml and the checks action run
 
 
-def format_in_place(root: Path, rel: str):
-    subprocess.run(
-        ["ruff", "format", "--no-cache", rel], cwd=root, check=True, capture_output=True
-    )
-
-
-def wide_base(tmp_path) -> Path:
-    """A repository whose main holds one file that is not formatted."""
-    root = repo(tmp_path, {"pkg/wide.py": WIDE, "deploy/stack.yml": "services: {}\n"})
-    commit_base(root, "a file nobody has formatted")
-    return root
-
-
-def test_the_syntax_tree_ignores_what_a_formatter_may_change():
-    a = "def f():\n    '''Doc.\n\n        More.   \n    '''\n    del (x, y)\n"
-    b = 'def f():\n    """Doc.\n\n    More.\n    """\n    del x, y\n'
-    assert rules.syntax_tree(a) == rules.syntax_tree(b)
-    assert rules.syntax_tree("x = 1\n") != rules.syntax_tree("x = 2\n")
-    assert rules.syntax_tree('x = "a"\n') != rules.syntax_tree('x = "a "\n')
-    # only a docstring is compared without its layout, never another string
-    assert rules.syntax_tree("x = '''a\n  b'''\n") != rules.syntax_tree(
-        "x = '''a\nb'''\n"
-    )
-
-
-@needs_ruff
-def test_a_file_that_was_only_re_formatted_passes(tmp_path, capsys):
-    root = wide_base(tmp_path)
-    format_in_place(root, "pkg/wide.py")
-    assert (root / "pkg" / "wide.py").read_text() != WIDE
-    commit(root, "re-format")
-    assert run(root, "--format-only") == 0, capsys.readouterr().out
-    assert "format-only: 1 re-formatted file(s), each with the syntax tree it had" in (
-        capsys.readouterr().out
-    )
-
-
-@needs_ruff
-def test_a_changed_literal_is_not_a_re_format(tmp_path, capsys):
-    root = wide_base(tmp_path)
-    format_in_place(root, "pkg/wide.py")
-    path = root / "pkg" / "wide.py"
-    path.write_text(path.read_text().replace('"m2"', '"ft2"'))
-    commit(root, "re-format, and one literal changed")
-    assert run(root, "--format-only") == 1
-    assert "format-only: pkg/wide.py: its code changed" in capsys.readouterr().out
-
-
-@needs_ruff
-def test_a_file_left_unformatted_fails_the_format_only_check(tmp_path, capsys):
-    root = wide_base(tmp_path)
-    write(root, {"pkg/wide.py": WIDE.replace("    return", "\n    return")})
-    commit(root, "a blank line, and still not formatted")
-    assert run(root, "--format-only") == 1
-    assert "ruff-format: pkg/wide.py" in capsys.readouterr().out
-
-
-@needs_ruff
-@pytest.mark.parametrize(
-    "change, words",
-    [
-        ("yaml", "deploy/stack.yml: is not a Python file"),
-        ("add", "pkg/new.py: is added"),
-        ("delete", "deploy/stack.yml: is deleted"),
-    ],
-)
-def test_a_format_only_branch_changes_nothing_but_the_layout_of_python_files(
-    tmp_path, capsys, change, words
-):
-    root = wide_base(tmp_path)
-    format_in_place(root, "pkg/wide.py")
-    if change == "yaml":
-        write(root, {"deploy/stack.yml": "services: {a: {}}\n"})
-    elif change == "add":
-        write(root, {"pkg/new.py": 'message = "new"\n'})
-    else:
-        git(root, "rm", "-q", "deploy/stack.yml")
-    commit(root, "re-format, and something else")
-    assert run(root, "--format-only") == 1
-    assert f"format-only: {words}" in capsys.readouterr().out
-
-
-@needs_ruff
-def test_a_file_that_does_not_parse_is_refused(tmp_path, capsys):
-    root = wide_base(tmp_path)
-    write(root, {"pkg/wide.py": "def area(:\n"})
-    commit(root, "broken")
-    assert run(root, "--format-only") == 1
-    assert "format-only: pkg/wide.py: it does not parse" in capsys.readouterr().out
-
-
-@needs_ruff
-def test_format_only_needs_a_base_even_outside_ci(tmp_path, capsys):
-    root = repo(tmp_path, {"pkg/clean.py": 'message = "ok"\n'})
-    commit(root, "no origin/main")
-    assert run(root, "--format-only") == 1
-    assert "base: cannot prove a format-only change" in capsys.readouterr().out
-
-
-@needs_ruff
-def test_a_re_format_leaves_the_findings_it_found(tmp_path, capsys):
-    """The reason for the mode: the changed file still has a finding, and passes."""
-    root = repo(tmp_path, {"pkg/dirty.py": LONG + "y = {'a': 1}\n"})
-    commit_base(root)
-    format_in_place(root, "pkg/dirty.py")
-    commit(root, "re-format a file with a long comment")
-    assert run(root) == 1  # the changed-file rule refuses it
-    assert "changed: pkg/dirty.py" in capsys.readouterr().out
-    assert run(root, "--format-only") == 0
-    assert "left in the repository: 1 finding(s)" in capsys.readouterr().out
-
-
-# python-lint's code rules step, run as CI runs it: a shallow checkout of the pull
-# request's merge commit, from a remote whose base branch has moved on since
-
-
-# The shell of the "Code rules" step: python-lint.yml and the checks action both run it.
 LINT_STEP = TOOLS / "steps" / "code-rules.sh"
 
 
-def moved_on_remote(tmp_path) -> dict:
-    """A remote: main has a finding, a PR merged into it, then main moved on.
-
-    The pull request changes only pkg/clean.py. After its merge commit was made,
-    main changed pkg/dirty.py, which has a finding.
-    """
-    origin = dirty_base(tmp_path / "origin")
-    git(origin, "config", "uploadpack.allowAnySHA1InWant", "true")
-    base = git(origin, "rev-parse", "HEAD").strip()
-    git(origin, "checkout", "-q", "-b", "pr")
-    write(origin, {"pkg/clean.py": 'message = "the pull request"\n'})
-    commit(origin, "the pull request")
-    head = git(origin, "rev-parse", "HEAD").strip()
-    git(origin, "checkout", "-q", "--detach", base)
-    git(origin, "merge", "-q", "--no-ff", "-m", "Merge pr into main", "pr")
-    merge = git(origin, "rev-parse", "HEAD").strip()
-    git(origin, "checkout", "-q", "main")
-    write(origin, {"pkg/dirty.py": LONG + "y = 2\n"})
-    commit(origin, "main moves on, in a file the pull request never touched")
-    tip = git(origin, "rev-parse", "HEAD").strip()
-    return {"origin": origin, "base": base, "head": head, "merge": merge, "tip": tip}
-
-
-def shallow_checkout(tmp_path, origin: Path, commit_sha: str) -> Path:
-    """What actions/checkout does: one commit, depth 1."""
-    ci = tmp_path / "ci"
-    ci.mkdir()
-    git(ci, "init", "-q")
-    git(ci, "remote", "add", "origin", f"file://{origin}")
-    git(ci, "fetch", "-q", "--no-tags", "--depth=1", "origin", commit_sha)
-    git(ci, "checkout", "-q", "--detach", "FETCH_HEAD")
-    return ci
-
-
-def run_lint_step(
-    tmp_path, ci: Path, pr_base: str, mode: str = "changed", event: str = "pull_request"
-):
-    env = {
-        "PATH": os.environ["PATH"],
-        "HOME": str(tmp_path),
-        "CI": "true",
-        "MODE": mode,
-        "FORMAT_CHECK": "true",
-        "EVENT": event,
-        "PR_BASE": pr_base,
-        "BEFORE": "",
-    }
-    return subprocess.run(
-        ["bash", str(LINT_STEP), "python"],
-        cwd=ci,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-
-
-@needs_ruff
-def test_a_pull_request_is_compared_with_its_merge_commits_first_parent(tmp_path):
-    """The base branch moved on after the merge commit: only the PR's files count.
-
-    The pull request's base SHA is given as the moved-on tip, the worst case: the
-    merge commit, not the event, says what the pull request was merged with.
-    """
-    r = moved_on_remote(tmp_path)
-    ci = shallow_checkout(tmp_path, r["origin"], r["merge"])
-    res = run_lint_step(tmp_path, ci, pr_base=r["tip"])
-    assert res.returncode == 0, res.stdout + res.stderr
-    assert f"code rules base: {r['base']}, the first parent of the merge" in res.stdout
-    assert "code_rules: 1 changed file(s) checked" in res.stdout
-    # the control: compared with the moved-on tip, the untouched file would fail it
-    git(ci, "fetch", "-q", "--no-tags", "--depth=1", "origin", r["tip"])
-    res = subprocess.run(
-        ["python3", str(TOOLS / "code_rules.py")],
-        cwd=ci,
-        env={**os.environ, "CI": "true", "CODE_RULES_BASE": r["tip"]},
-        capture_output=True,
-        text=True,
-    )
-    assert res.returncode == 1 and "changed: pkg/dirty.py" in res.stdout
-
-
-@needs_ruff
-def test_a_pull_request_without_a_merge_commit_uses_its_base_sha(tmp_path):
-    r = moved_on_remote(tmp_path)
-    ci = shallow_checkout(tmp_path, r["origin"], r["head"])
-    res = run_lint_step(tmp_path, ci, pr_base=r["base"])
-    assert res.returncode == 0, res.stdout + res.stderr
-    assert f"code rules base: {r['base']}, the pull request's base" in res.stdout
-    assert "code_rules: 1 changed file(s) checked" in res.stdout
-
-
-@needs_ruff
-def test_mode_all_checks_every_file_of_the_pull_request(tmp_path):
-    """The default: a finding in a file the pull request never touched fails it."""
-    r = moved_on_remote(tmp_path)
-    ci = shallow_checkout(tmp_path, r["origin"], r["merge"])
-    res = run_lint_step(tmp_path, ci, pr_base=r["base"], mode="all")
-    assert res.returncode == 1, res.stdout + res.stderr
-    assert "all: pkg/dirty.py: 1 ruff finding(s) (E501 1)" in res.stdout
-    assert "  pkg/dirty.py:1:89: E501" in res.stdout
-
-
-@needs_ruff
-def test_mode_changed_without_a_base_checks_every_file(tmp_path):
-    r = moved_on_remote(tmp_path)
-    ci = shallow_checkout(tmp_path, r["origin"], r["merge"])
-    res = run_lint_step(tmp_path, ci, pr_base="", event="schedule")
-    assert res.returncode == 1, res.stdout + res.stderr
-    assert "no base to compare with on a schedule event: every file is checked" in (
-        res.stdout
-    )
-    assert "all: pkg/dirty.py" in res.stdout
-
-
-def test_the_workflow_checks_every_file_by_default():
-    text = (ROOT / ".github" / "workflows" / "python-lint.yml").read_text()
-    assert 'mode: {type: string, default: "all"' in text
-    assert "ratchet" not in text and "--report-only" not in text
-    assert (
-        'run: bash "$RUNNER_TEMP/standards/tools/steps/code-rules.sh" python\n' in text
-    )
-    assert "export CODE_RULES_BASE" in LINT_STEP.read_text()
+def test_the_workflows_check_every_file_and_hold_no_base_detection():
+    """No mode, no format-only, no base: the shell left is the step script."""
+    for name in ("python-lint.yml", "node-lint.yml"):
+        text = (ROOT / ".github" / "workflows" / name).read_text()
+        assert "  mode:" not in text and "format-only" not in text, name
+        assert "CODE_RULES_BASE" not in text and "PR_BASE" not in text, name
+        assert "ratchet" not in text and "--report-only" not in text, name
+    step = LINT_STEP.read_text()
+    assert "git " not in step and "CODE_RULES_BASE" not in step and "MODE" not in step
+    assert 'exec python3 "$here/../code_rules.py" "${args[@]}"\n' in step
 
 
 def test_node_lint_checks_every_file_and_has_no_baseline():
     """node-lint is python-lint's rule for JavaScript: clean files, no ratchet."""
     text = (ROOT / ".github" / "workflows" / "node-lint.yml").read_text()
-    assert 'mode: {type: string, default: "all"' in text
     assert "ratchet" not in text and "code_rules_baseline" not in text
-    assert "--update" not in text and "@v1" not in text
-    assert "node-lint.yml@v2" in text and "Added in v2.2.0" in text
+    assert "--update" not in text and "@v1" not in text and "@v2" not in text
+    assert "node-lint.yml@v3" in text
     step = LINT_STEP.read_text()
     assert "--eslint" in step and "--prettier" in step and "--no-format" in step
     # any commit SHA with its version beside it: Dependabot moves the pin
@@ -780,10 +401,9 @@ def test_node_lint_checks_every_file_and_has_no_baseline():
         py.split("runs-on: ", 1)[1].split("\n", 1)[0]
         == text.split("runs-on: ", 1)[1].split("\n", 1)[0]
     )
-    # The base a pull request is compared with is the same shell: both run one script.
     run = 'run: bash "$RUNNER_TEMP/standards/tools/steps/code-rules.sh" '
     assert run + "node\n" in text and run + "python\n" in py
-    assert "git fetch" not in text + py and "CODE_RULES_BASE=" not in text + py
+    assert "git fetch" not in step
 
 
 def _eslint(rel, code="no-unused-vars", message="'x' is unused.", line=1, col=1):
@@ -848,16 +468,12 @@ def test_eslint_findings_are_read_per_file_rule_and_function(tmp_path):
     ) == ["src/a.ts"]
 
 
-def test_a_changed_typescript_file_with_an_eslint_finding_fails(
-    tmp_path, capsys, monkeypatch
-):
+def test_a_typescript_file_with_an_eslint_finding_fails(tmp_path, capsys, monkeypatch):
     root = repo(
         tmp_path,
         {"src/a.ts": "export const a = 1;\n", "src/old.ts": "export const o = 1;\n"},
     )
-    commit_base(root)
-    write(root, {"src/a.ts": "export const a = 2;\n"})
-    commit(root, "edit a")
+    commit(root)
     monkeypatch.setattr(
         rules,
         "eslint_findings",
@@ -866,22 +482,18 @@ def test_a_changed_typescript_file_with_an_eslint_finding_fails(
     monkeypatch.setattr(rules, "ruff_findings", lambda *a, **k: pytest.fail("ran ruff"))
     assert run(root, "--eslint") == 1
     out = capsys.readouterr().out
-    assert "changed: src/a.ts: 1 eslint finding(s) (no-unused-vars 1)" in out
+    assert "all: src/a.ts: 1 eslint finding(s) (no-unused-vars 1)" in out
+    assert "all: src/old.ts: 1 eslint finding(s)" in out
     assert "src/a.ts:1:1: no-unused-vars 'x' is unused." in out
     assert "the ESLint rule `no-unused-vars`" in out
-    assert "old.ts" not in out
     assert "2 finding(s)" in out
-    assert run(root, "--eslint", "--all") == 1
-    out = capsys.readouterr().out
-    assert "all: src/old.ts: 1 eslint finding(s)" in out
-    assert "all: src/a.ts: 1 eslint finding(s)" in out
 
 
-def test_a_clean_typescript_change_passes_and_skips_ruff(tmp_path, capsys, monkeypatch):
+def test_a_clean_typescript_project_passes_and_skips_ruff(
+    tmp_path, capsys, monkeypatch
+):
     root = repo(tmp_path, {"src/a.ts": "export const a = 1;\n"})
-    commit_base(root)
-    write(root, {"src/a.ts": "export const a = 2;\n"})
-    commit(root, "edit a")
+    commit(root)
     monkeypatch.setattr(rules, "eslint_findings", lambda *a, **k: [])
     monkeypatch.setattr(rules, "ruff_findings", lambda *a, **k: pytest.fail("ran ruff"))
     assert run(root, "--eslint") == 0
@@ -890,53 +502,52 @@ def test_a_clean_typescript_change_passes_and_skips_ruff(tmp_path, capsys, monke
     )
 
 
-def test_a_changed_typescript_file_over_the_size_limit_fails(
-    tmp_path, capsys, monkeypatch
-):
-    root = repo(tmp_path, {"src/a.ts": "export const a = 1;\n"})
-    commit_base(root)
-    write(root, {"src/a.ts": "export const a = 1;\n" * 801})
+def test_a_typescript_file_over_the_size_limit_fails(tmp_path, capsys, monkeypatch):
+    root = repo(tmp_path, {"src/a.ts": "export const a = 1;\n" * 801})
     commit(root, "grow")
     monkeypatch.setattr(rules, "eslint_findings", lambda *a, **k: [])
     assert run(root, "--eslint") == 1
-    assert "src/a.ts: 801 lines, over its limit 800" in capsys.readouterr().out
+    assert "all: src/a.ts: 801 lines, over its limit 800" in capsys.readouterr().out
 
 
-def test_prettier_fails_a_changed_file_and_keeps_one_nobody_touched(
-    tmp_path, capsys, monkeypatch
-):
+def test_prettier_fails_every_unformatted_file(tmp_path, capsys, monkeypatch):
     root = repo(tmp_path, {"src/a.ts": "export const a = 1;\n", "README.md": "# hi\n"})
-    commit_base(root)
-    write(root, {"src/a.ts": "export const a = 2;\n"})
-    commit(root, "edit a")
+    commit(root)
     monkeypatch.setattr(rules, "eslint_findings", lambda *a, **k: [])
     monkeypatch.setattr(
         rules, "prettier_unformatted", lambda *a, **k: ["src/a.ts", "README.md"]
     )
     assert run(root, "--eslint", "--prettier") == 1
     out = capsys.readouterr().out
-    assert "prettier: src/a.ts: fails `prettier --check`" in out
-    assert "README.md" not in out.split("left in the repository")[0]
+    assert "all: src/a.ts: fails `prettier --check`" in out
+    assert "all: README.md: fails `prettier --check`" in out
     assert "2 file(s) failing prettier" in out
-    assert run(root, "--eslint", "--prettier", "--all") == 1
-    assert "all: README.md: fails `prettier --check`" in capsys.readouterr().out
 
 
-def test_paths_limit_eslint_to_those_files(tmp_path, monkeypatch):
+def test_paths_limit_eslint_and_prettier_to_those_files(tmp_path, monkeypatch):
     root = repo(
         tmp_path,
         {"src/a.ts": "export const a = 1;\n", "other/b.ts": "export const b = 1;\n"},
     )
-    commit_base(root)
+    commit(root)
     seen = {}
 
-    def fake(root, keep=None):
-        seen["keep"] = keep
+    def fake(root, keep=None, extra=()):
+        seen["keep"], seen["extra"] = keep, extra
+        return []
+
+    def prettier(root, paths):
+        seen["paths"] = paths
         return []
 
     monkeypatch.setattr(rules, "eslint_findings", fake)
-    assert run(root, "--eslint", "--all", "--paths", "src") == 0
+    monkeypatch.setattr(rules, "prettier_unformatted", prettier)
+    assert run(root, "--eslint", "--prettier", "--paths", "src") == 0
     assert "src/a.ts" in seen["keep"] and "other/b.ts" not in seen["keep"]
+    assert seen["paths"] == ("src",)
+    assert seen["extra"] == ["--no-inline-config"]  # the default since v3
+    assert run(root, "--eslint", "--inline-config") == 0
+    assert seen["extra"] == ()
 
 
 def test_eslint_needs_the_projects_eslint(tmp_path):
@@ -947,7 +558,7 @@ def test_eslint_needs_the_projects_eslint(tmp_path):
 
 def test_prettier_needs_the_projects_prettier(tmp_path, monkeypatch):
     root = repo(tmp_path, {"src/a.ts": "export const a = 1;\n"})
-    commit_base(root)
+    commit(root)
     monkeypatch.setattr(rules, "eslint_findings", lambda *a, **k: [])
     with pytest.raises(SystemExit, match="prettier not found"):
         run(root, "--eslint", "--prettier")
@@ -1006,10 +617,11 @@ def test_standards_check_finds_every_gap(tmp_path):
     ]
 
 
-# the opt-in pull request template and pre-commit config checks (v2.1.0, default off)
+# the pull request template and pre-commit config checks: opt-in in v2.1.0, on by
+# default since v3. check() takes each as a keyword; the command line turns all on.
 
 
-def test_pr_template_and_pre_commit_checks_are_off_by_default(tmp_path):
+def test_check_takes_the_pr_template_and_pre_commit_checks_by_keyword(tmp_path):
     root = repo(
         tmp_path,
         {
@@ -1057,7 +669,18 @@ def test_pre_commit_check_wants_the_file_at_the_root(tmp_path):
     assert standards.check(root, require_pre_commit=True) == []
 
 
-def test_main_wires_the_require_flags(tmp_path, capsys):
+NO_REQUIRE = [
+    "--no-require-pr-template",
+    "--no-require-pre-commit",
+    "--no-require-ticket-template",
+    "--no-require-current-templates",
+    "--no-require-agent-settings",
+    "--no-require-one-ruff-version",
+]
+
+
+def test_main_runs_every_check_unless_a_flag_turns_one_off(tmp_path, capsys):
+    """v3: the six checks are on; each has a `--no-` flag, and v2's flag still parses."""
     root = repo(
         tmp_path,
         {
@@ -1065,10 +688,17 @@ def test_main_wires_the_require_flags(tmp_path, capsys):
             "CLAUDE.md": "x",
         },
     )
-    assert standards.main(["--root", str(root)]) == 0
-    assert standards.main(["--root", str(root), "--require-pr-template"]) == 1
+    assert standards.main(["--root", str(root), *NO_REQUIRE]) == 0
+    capsys.readouterr()
+    assert standards.main(["--root", str(root)]) == 1
     out = capsys.readouterr().out
     assert "pull_request_template.md is missing" in out
-    assert standards.main(["--root", str(root), "--require-pre-commit"]) == 1
-    out = capsys.readouterr().out
     assert ".pre-commit-config.yaml is missing" in out
+    assert ".claude/settings.json is missing" in out
+    only_pr = [f for f in NO_REQUIRE if f != "--no-require-pr-template"]
+    assert standards.main(["--root", str(root), *only_pr]) == 1
+    out = capsys.readouterr().out
+    assert "pull_request_template.md is missing" in out
+    assert ".pre-commit-config.yaml" not in out
+    flags = [*only_pr, "--require-pr-template"]  # v2's flag: on, as it already is
+    assert standards.main(["--root", str(root), *flags]) == 1

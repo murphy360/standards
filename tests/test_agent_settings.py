@@ -531,10 +531,14 @@ def gaps(root: Path) -> list[str]:
     return standards.check(root, require_agent_settings=True)
 
 
-def test_the_agent_settings_check_is_off_by_default(tmp_path):
+def test_the_agent_settings_check_is_on_by_default_and_can_be_turned_off(tmp_path):
     root = repo(tmp_path, BASE)
-    assert standards.check(root) == []
-    assert standards.main(["--root", str(root)]) == 0
+    assert standards.check(root) == []  # check() takes each check by keyword
+    off = ["--no-require-agent-settings", "--no-require-one-ruff-version"]
+    off += ["--no-require-pr-template", "--no-require-pre-commit"]
+    off += ["--no-require-ticket-template", "--no-require-current-templates"]
+    assert standards.main(["--root", str(root), *off]) == 0
+    assert standards.main(["--root", str(root), *off[1:]]) == 1  # v3: on
 
 
 def test_the_check_wants_the_settings_and_the_guard_they_name(tmp_path):
@@ -614,14 +618,13 @@ def test_main_wires_the_agent_settings_flag(tmp_path, capsys):
 def test_the_workflow_passes_its_input_to_the_tool():
     text = WORKFLOW.read_text()
     declared = text.split("      check-agent-settings:\n", 1)[1].splitlines()[:2]
-    assert [line.strip() for line in declared] == ["type: boolean", "default: false"]
+    assert [line.strip() for line in declared] == ["type: boolean", "default: true"]
     assert "CHECK_AGENT_SETTINGS: ${{ inputs.check-agent-settings }}" in text
     assert text.endswith(
         'run: bash "$RUNNER_TEMP/standards/tools/steps/standards-check.sh"\n'
     )
     script = (ROOT / "tools" / "steps" / "standards-check.sh").read_text()
     assert (
-        'if [ "$CHECK_AGENT_SETTINGS" = "true" ]; then\n'
-        "  args+=(--require-agent-settings)\n"
+        '[ "$CHECK_AGENT_SETTINGS" != false ] || args+=(--no-require-agent-settings)\n'
     ) in script
     assert ("check-agent-settings", "--require-agent-settings") in rehearsal.CHECK_FLAGS
