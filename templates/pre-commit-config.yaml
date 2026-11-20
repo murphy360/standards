@@ -18,7 +18,7 @@ repos:
       - id: end-of-file-fixer
       - id: trailing-whitespace
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: c0f278f1254ccc8fb09676bcdb8d847e7db493e5  # v0.17.4
+    rev: ef6cf06c079dd6b299dfc720b0f14400c9d168e1  # v0.17.5
     hooks:
       # No plain `ruff` hook: since ruff 0.16 it would lint with ruff's own default rules, about 400 of them. The
       # code-rules hook below runs ruff with the standard's rules, and prints the fix for each finding.
